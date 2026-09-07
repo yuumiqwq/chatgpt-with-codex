@@ -19,7 +19,9 @@ const ENVIRONMENT_ALLOWLIST = ["PATH", "HOME", "CODEX_HOME", "TMPDIR", "LANG", "
 const MAX_EVIDENCE = 50;
 const MAX_TEXT = 16_384;
 const MAX_EVIDENCE_BYTES = 65_536;
-const MAX_JSONL_LINE_BYTES = 65_536;
+// Bound wire messages separately from the smaller supervisor evidence budget.
+// Large agent messages may contain a complete patch; never truncate that patch.
+const MAX_JSONL_LINE_BYTES = 1_048_576;
 const DEFAULT_RPC_CALL_TIMEOUT_MS = 30_000;
 // Official npm target of the Codex CLI, derived from a codex.cmd shim's
 // location so a Windows npm install can be launched through Node directly

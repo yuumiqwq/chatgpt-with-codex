@@ -879,8 +879,8 @@ test("fails promptly with bounded diagnostics for an overlong unterminated Codex
   const invocation = invocations[0];
   assert.ok(invocation);
 
-  invocation.writeStdout("x".repeat(40_000));
-  invocation.writeStdout(`${"y".repeat(40_000)}${secret}`);
+  invocation.writeStdout("x".repeat(600_000));
+  invocation.writeStdout(`${"y".repeat(600_000)}${secret}`);
 
   const result = await pending;
   assert.equal(result.kind, "failed");
@@ -888,6 +888,28 @@ test("fails promptly with bounded diagnostics for an overlong unterminated Codex
   assert.equal(result.error.code, "CODEX_PROTOCOL_ERROR");
   assert.ok(JSON.stringify(result).length <= 2_048);
   assert.equal(JSON.stringify(result).includes(secret), false);
+});
+
+test("accepts a complete UTF-8 agent message at the 1 MiB wire boundary", async () => {
+  const overhead = Buffer.byteLength(JSON.stringify({ method: "item/completed", params: { item: { id: "message-1", type: "agentMessage", text: "" } } }));
+  const textBytes = 1_048_576 - overhead;
+  const output = "字".repeat(Math.floor(textBytes / 3)) + "x".repeat(textBytes % 3);
+  const executor = timedExecutor(fakeStarter({ appServerOutput: output }, []));
+  const result = await executor.execute({ taskId: TASK_ID, instruction: "x" });
+  assert.equal(result.kind, "completed");
+  if (result.kind === "completed") assert.equal(result.output, output);
+});
+
+test("rejects a terminated UTF-8 agent message one byte beyond 1 MiB without leaking its contents", async () => {
+  const overhead = Buffer.byteLength(JSON.stringify({ method: "item/completed", params: { item: { id: "message-1", type: "agentMessage", text: "" } } }));
+  const textBytes = 1_048_577 - overhead;
+  const output = "字".repeat(Math.floor(textBytes / 3)) + "x".repeat(textBytes % 3);
+  const executor = timedExecutor(fakeStarter({ appServerOutput: output }, []));
+  const result = await executor.execute({ taskId: TASK_ID, instruction: "x" });
+  assert.equal(result.kind, "failed");
+  if (result.kind === "failed") assert.equal(result.error.code, "CODEX_PROTOCOL_ERROR");
+  assert.ok(JSON.stringify(result).length < 2_048);
+  assert.equal(JSON.stringify(result).includes("字"), false);
 });
 
 test("exposes only executor start/end timing metadata in structured diagnostics", async () => {
