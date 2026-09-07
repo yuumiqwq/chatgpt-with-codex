@@ -154,6 +154,12 @@ async function main(): Promise<void> {
   );
   const server = new McpServer({ name: "engineering-bridge", version: VERSION });
 
+  server.registerTool("list_workspaces", {
+    description: "Discover registered local projects before running tasks when the user provides a project name or description instead of workspace_id. Optional query filters name, path or ID by case-insensitive substring. Omit query to list all registered projects and use their names to interpret the user's meaning. Return all ambiguous candidates; ask the user when the intended project is unclear. Never invent IDs. This read-only tool only reads the workspace registry; it does not scan project files or register directories.",
+    inputSchema: { query: z.string().max(256).optional() },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ query }) => jsonContent({ workspaces: registry.list(query) }));
+
   server.registerTool("run_task", {
     description: "Run a read-only task with the selected executor in a pre-registered workspace. This tool does not modify workspace files.",
     inputSchema: {

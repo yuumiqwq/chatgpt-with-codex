@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, normalize } from "node:path";
+import { basename, isAbsolute, normalize } from "node:path";
 
 import { CoreError } from "../core/errors.js";
 
@@ -58,6 +58,19 @@ export class RegisteredWorkspaceRegistry {
     const registration = this.registrations.get(workspaceId);
     if (registration === undefined) throw new CoreError("UNKNOWN_WORKSPACE");
     return registration.root;
+  }
+
+  list(query = "") {
+    const needle = query.trim().normalize("NFKC").toLowerCase();
+    return [...this.registrations].map(([id, entry]) => ({
+      workspace_id: id,
+      name: basename(entry.root),
+      root: entry.root,
+      allow_write: entry.allowWrite,
+      source: entry.source
+    })).filter(entry => !needle || [entry.name, entry.root, entry.workspace_id]
+      .some(value => value.normalize("NFKC").toLowerCase().includes(needle)))
+      .sort((a, b) => a.root.localeCompare(b.root));
   }
 
   resolveExecution(workspaceId: string): { root: string; allowWrite: boolean } {
