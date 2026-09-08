@@ -1,5 +1,7 @@
 # Engineering Bridge
 
+本地分支增加了等待任务、文件操作和原生会话续接，可选的主机能力通过独立配置启用。配置方式与权限说明见 [Host operations](docs/host-operations.md)，上游版本信息保留如下。
+
 **打通 Chat 与本地 Codex 与 Deepseek harness：不再搬提示词，Chat 直接调度、监督并验收 Codex 与 Deepseek harness。**
 
 [![v1.4.2](https://img.shields.io/badge/release-v1.4.2-blue)](https://github.com/wudy29/engineering-bridge/releases/tag/v1.4.2)

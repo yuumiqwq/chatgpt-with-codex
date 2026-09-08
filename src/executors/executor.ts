@@ -21,7 +21,10 @@ export interface ExecutorRequest {
   readonly model?: string;
   readonly reasoning_effort?: string;
   readonly threadId?: string | undefined;
+  readonly threadPath?: string;
+  readonly threadHome?: string;
   readonly onEvidence?: (evidence: readonly ExecutorEvidence[]) => void;
+  readonly onThreadId?: (threadId: string) => void;
 }
 
 export interface ExecutorDiagnostics {

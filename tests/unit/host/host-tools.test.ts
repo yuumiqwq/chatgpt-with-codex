@@ -1,0 +1,266 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
+import test, { type TestContext } from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+import type { ExecutorRequest } from "../../../src/executors/executor.js";
+import { locateCodexSession } from "../../../src/host/codex-sessions.js";
+import { runHostCommand } from "../../../src/host/host-command.js";
+import { HostFiles } from "../../../src/host/host-files.js";
+import { containsPath, HostError, HostPolicy } from "../../../src/host/host-policy.js";
+import { registerHostTools } from "../../../src/host/host-tools.js";
+import { RegisteredWorkspaceTaskService } from "../../../src/tasks/registered-workspace-task-service.js";
+import { RegisteredWorkspaceRegistry } from "../../../src/workspaces/registered-workspace-registry.js";
+
+const THREAD_ID = "550e8400-e29b-41d4-a716-446655440000";
+const digest = (content: string | Buffer) => createHash("sha256").update(content).digest("hex");
+const hostCode = (code: string) => (error: unknown) => error instanceof HostError && error.code === code;
+
+async function fixture(t: TestContext, commands = false) {
+  const root = await mkdtemp(join(tmpdir(), "bridge-host-"));
+  t.after(async () => {
+    assert.ok(containsPath(resolve(tmpdir()), resolve(root)));
+    assert.ok(relative(resolve(tmpdir()), resolve(root)).startsWith("bridge-host-"));
+    await rm(root, { recursive: true, force: true });
+  });
+  const allowed = join(root, "allowed");
+  const readOnly = join(root, "read-only");
+  const outside = join(root, "outside");
+  const codexHome = join(root, "codex");
+  await Promise.all([allowed, readOnly, outside, codexHome].map(path => mkdir(path)));
+  const policyPath = join(allowed, "host-policy.json");
+  const config = { version: 1, enabled: true, read_roots: [allowed, readOnly, codexHome],
+    write_roots: [allowed], command_roots: [allowed], commands_enabled: commands,
+    codex_homes: [codexHome], protected_paths: [join(allowed, "protected")] };
+  await writeFile(policyPath, JSON.stringify(config));
+  const policy = await HostPolicy.load(policyPath);
+  return { root, allowed, readOnly, outside, codexHome, policyPath, config, policy, files: new HostFiles(policy) };
+}
+
+test("missing policy disables all host operations", async t => {
+  const f = await fixture(t);
+  const policy = await HostPolicy.load(join(f.root, "missing.json"));
+  assert.equal(policy.config.enabled, false);
+  await assert.rejects(policy.check(f.allowed, "read"), hostCode("HOST_DISABLED"));
+});
+
+test("file tools create and replace Unicode text only against the reviewed hash", async t => {
+  const { allowed, files } = await fixture(t);
+  const path = join(allowed, "含 空格", "笔记.md");
+  const created = await files.write(path, "原始笔记", undefined, true);
+  const read = await files.read(path);
+  assert.equal(read.content, "原始笔记");
+  assert.equal(read.sha256, created.sha256);
+  await assert.rejects(files.write(path, "overwrite"), hostCode("HOST_DESTINATION_EXISTS"));
+  const replaced = await files.write(path, "updated", read.sha256);
+  assert.equal(replaced.sha256, digest("updated"));
+  await assert.rejects(files.write(path, "lost update", read.sha256), hostCode("HOST_FILE_CHANGED"));
+  assert.equal(await readFile(path, "utf8"), "updated");
+});
+
+test("concurrent replacements do not overwrite a newer reviewed version", async t => {
+  const { allowed, files } = await fixture(t);
+  const path = join(allowed, "counter.txt");
+  await files.write(path, "before");
+  const results = await Promise.allSettled([
+    files.write(path, "first", digest("before")),
+    files.write(path, "second", digest("before"))
+  ]);
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(await readFile(path, "utf8"), "first");
+});
+
+test("path traversal, neighboring prefixes and configured protected files are rejected", async t => {
+  const f = await fixture(t);
+  await assert.rejects(f.files.write(join(f.outside, "file"), "x"), hostCode("HOST_PATH_DENIED"));
+  await assert.rejects(f.files.write(f.allowed + "-other/file", "x"), hostCode("HOST_PATH_DENIED"));
+  await assert.rejects(f.files.write(f.allowed + "/../outside/file", "x"), hostCode("HOST_PATH_DENIED"));
+  await assert.rejects(f.files.write(join(f.allowed, "protected", "file"), "x", undefined, true), hostCode("HOST_PATH_DENIED"));
+  await assert.rejects(f.files.write(f.policyPath, "{}", digest(JSON.stringify(f.config))), hostCode("HOST_PATH_DENIED"));
+  await assert.rejects(f.files.write(f.policyPath + ".audit.jsonl", "x"), hostCode("HOST_PATH_DENIED"));
+  await writeFile(join(f.codexHome, "auth.json"), "credential-marker");
+  await assert.rejects(f.files.read(join(f.codexHome, "auth.json")), hostCode("HOST_PATH_DENIED"));
+  await writeFile(join(f.allowed, ".env"), "credential-marker");
+  await assert.rejects(f.files.read(join(f.allowed, ".env")), hostCode("HOST_PATH_DENIED"));
+  if (process.platform === "win32") {
+    for (const path of [join(f.allowed, "file.txt:stream"), join(f.allowed, "file. "),
+      join(f.allowed, "CON.txt"), "\\\\?\\C:\\Windows\\file"]) {
+      await assert.rejects(f.files.write(path, "x"), hostCode("HOST_PATH_DENIED"));
+    }
+  }
+});
+
+test("junction ancestors and hard-linked files do not escape file policy", async t => {
+  const f = await fixture(t);
+  const linkPath = join(f.allowed, "linked");
+  await symlink(f.outside, linkPath, process.platform === "win32" ? "junction" : "dir");
+  await assert.rejects(f.files.write(join(linkPath, "escape.txt"), "x"), hostCode("HOST_PATH_DENIED"));
+  const externalFile = join(f.outside, "original.txt");
+  const hardLink = join(f.allowed, "hard.txt");
+  await writeFile(externalFile, "original");
+  await link(externalFile, hardLink);
+  await assert.rejects(f.files.write(hardLink, "changed", digest("original")), hostCode("HOST_FILE_UNSUPPORTED"));
+  assert.equal(await readFile(externalFile, "utf8"), "original");
+});
+
+test("binary copies and moves preserve bytes without overwriting destinations", async t => {
+  const f = await fixture(t);
+  const bytes = Buffer.from([0, 255, 128, 2, 10, 13, 4]);
+  const source = join(f.readOnly, "image.png");
+  const copied = join(f.allowed, "assets", "image.png");
+  await writeFile(source, bytes);
+  const result = await f.files.copy(source, copied, true);
+  assert.equal(result.sha256, digest(bytes));
+  assert.deepEqual(await readFile(copied), bytes);
+  await assert.rejects(f.files.read(copied), hostCode("HOST_BINARY_FILE"));
+  assert.equal((await f.files.read(copied, 0, 10, "base64")).content, bytes.toString("base64"));
+  await assert.rejects(f.files.copy(source, copied), hostCode("HOST_DESTINATION_EXISTS"));
+  const moved = join(f.allowed, "moved.png");
+  await f.files.move(copied, moved, result.sha256);
+  await assert.rejects(readFile(copied), { code: "ENOENT" });
+  assert.deepEqual(await readFile(moved), bytes);
+  await assert.rejects(f.files.move(source, join(f.allowed, "forbidden.png"), result.sha256), hostCode("HOST_PATH_DENIED"));
+});
+
+test("deletion requires the current digest and never removes a nonempty directory or configured root", async t => {
+  const { allowed, files } = await fixture(t);
+  const folder = join(allowed, "folder");
+  const path = join(folder, "note.txt");
+  await files.write(path, "keep", undefined, true);
+  await assert.rejects(files.remove(path), hostCode("HOST_EXPECTED_HASH_REQUIRED"));
+  await assert.rejects(files.remove(path, digest("old")), hostCode("HOST_FILE_CHANGED"));
+  await assert.rejects(files.remove(folder));
+  await assert.rejects(files.remove(allowed), hostCode("HOST_PATH_DENIED"));
+  assert.equal(await readFile(path, "utf8"), "keep");
+  await files.remove(path, digest("keep"));
+  await files.remove(folder);
+});
+
+test("bounded reads and paginated directory listings preserve access to later content", async t => {
+  const { allowed, files } = await fixture(t);
+  const path = join(allowed, "large.txt");
+  await files.write(path, "0123456789");
+  const first = await files.read(path, 0, 3);
+  assert.equal(first.content, "012");
+  assert.equal(first.next_offset, 3);
+  assert.equal(first.truncated, true);
+  assert.equal((await files.read(path, 8, 3)).content, "89");
+  assert.equal((await files.read(path, 20, 3)).content, "");
+  const page = await files.list(allowed, 0, 1);
+  assert.equal(page.entries.length, 1);
+  assert.equal(page.truncated, true);
+  assert.equal((await files.list(allowed, page.next_offset, 1)).entries.length, 1);
+});
+
+test("host commands need a separate opt-in and preserve literal argv", async t => {
+  const f = await fixture(t);
+  await assert.rejects(runHostCommand(f.policy, process.execPath, ["-e", "0"], f.allowed), hostCode("HOST_COMMAND_DISABLED"));
+  const enabled = await HostPolicy.create({ ...f.config, commands_enabled: true }, f.policyPath);
+  const literal = "spaces ; $(do-not-run) " + String.fromCharCode(96);
+  const result = await runHostCommand(enabled, process.execPath,
+    ["-e", "process.stdout.write(process.argv[1]); process.stderr.write('err');", literal], f.allowed);
+  assert.equal(result.stdout, literal);
+  assert.equal(result.stderr, "err");
+  assert.equal(result.exit_code, 0);
+  assert.equal(result.timed_out, false);
+});
+
+test("host command output is bounded and timeout stops a live process", { timeout: 10_000 }, async t => {
+  const f = await fixture(t, true);
+  const output = await runHostCommand(f.policy, process.execPath,
+    ["-e", "process.stdout.write('x'.repeat(100000));"], f.allowed);
+  assert.equal(Buffer.byteLength(output.stdout), 65_536);
+  assert.equal(output.truncated, true);
+  const timeout = await runHostCommand(f.policy, process.execPath,
+    ["-e", "setInterval(()=>{},1000)"], f.allowed, 1);
+  assert.equal(timeout.timed_out, true);
+});
+
+test("host command cancellation kills the command while pre-abort starts no process", { timeout: 10_000 }, async t => {
+  const f = await fixture(t, true);
+  const controller = new AbortController();
+  const waiting = runHostCommand(f.policy, process.execPath,
+    ["-e", "setInterval(()=>{},1000)"], f.allowed, 10, controller.signal);
+  const timer = setTimeout(() => controller.abort(), 100);
+  t.after(() => clearTimeout(timer));
+  assert.equal((await waiting).cancelled, true);
+  await assert.rejects(runHostCommand(f.policy, process.execPath,
+    ["-e", "0"], f.allowed, 10, controller.signal), { name: "AbortError" });
+});
+
+test("native session lookup verifies the header UUID and original allowed cwd", async t => {
+  const f = await fixture(t);
+  const sessions = join(f.codexHome, "sessions", "2026", "09", "08");
+  await mkdir(sessions, { recursive: true });
+  const path = join(sessions, "rollout-" + THREAD_ID + ".jsonl");
+  await writeFile(path, JSON.stringify({ type: "session_meta", payload: {
+    id: THREAD_ID, cwd: f.allowed
+  } }) + "\n");
+  assert.deepEqual(await locateCodexSession(f.policy, THREAD_ID), {
+    threadId: THREAD_ID, cwd: f.allowed, codexHome: f.codexHome, rolloutPath: path
+  });
+  await writeFile(path, JSON.stringify({ type: "session_meta", payload: {
+    id: THREAD_ID, cwd: f.outside
+  } }) + "\n");
+  await assert.rejects(locateCodexSession(f.policy, THREAD_ID), hostCode("HOST_PATH_DENIED"));
+  await assert.rejects(locateCodexSession(f.policy, "invalid"), hostCode("CODEX_THREAD_NOT_FOUND"));
+});
+
+test("native resume passes the original UUID and home and still enforces read-only execution", async t => {
+  const f = await fixture(t);
+  let received: ExecutorRequest | undefined;
+  let complete!: (value: { kind: "completed"; output: string; threadId: string }) => void;
+  const service = new RegisteredWorkspaceTaskService(new RegisteredWorkspaceRegistry([]), (executor, cwd, home) => {
+    assert.equal(executor, "codex");
+    assert.equal(cwd, f.allowed);
+    assert.equal(home, f.codexHome);
+    return { execute: async request => {
+      received = request;
+      return new Promise(resolveResult => { complete = resolveResult; });
+    } };
+  });
+  const request = { threadId: THREAD_ID, cwd: f.allowed, codexHome: f.codexHome, instruction: "Continue reading." };
+  const { taskId } = service.resumeCodexThread(request);
+  assert.throws(() => service.resumeCodexThread(request));
+  await Promise.resolve();
+  assert.equal(received?.threadId, THREAD_ID);
+  assert.equal(received?.sandbox, "read-only");
+  assert.equal(service.hasPendingTasks(), true);
+  complete({ kind: "completed", output: "continued", threadId: THREAD_ID });
+  assert.equal((await service.waitTask(taskId, 1))?.review_output, "continued");
+  assert.throws(() => service.resumeCodexThread(request), { code: "CODEX_THREAD_BUSY" });
+  await service.controlTask(taskId, "accept");
+  assert.equal(service.hasPendingTasks(), false);
+});
+
+test("MCP advertises enabled tools, enforces exact delete confirmation and audits no content", async t => {
+  const f = await fixture(t);
+  const service = new RegisteredWorkspaceTaskService(new RegisteredWorkspaceRegistry([]), () => ({
+    execute: async () => ({ kind: "completed", output: "ok" })
+  }));
+  const server = new McpServer({ name: "host-test", version: "1" });
+  registerHostTools(server, f.policy, service);
+  const client = new Client({ name: "client", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await server.close(); });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const names = (await client.listTools()).tools.map(tool => tool.name);
+  assert.ok(names.includes("resume_codex_thread"));
+  assert.ok(names.includes("run_host_command"));
+  const path = join(f.allowed, "note.txt");
+  const content = "private-content-marker";
+  assert.notEqual((await client.callTool({ name: "write_host_text_file", arguments: { path, content } })).isError, true);
+  assert.equal((await client.callTool({ name: "delete_file", arguments: {
+    path, expected_sha256: digest(content), confirmation: "yes"
+  } })).isError, true);
+  assert.equal(await readFile(path, "utf8"), content);
+  const audit = await readFile(f.policyPath + ".audit.jsonl", "utf8");
+  assert.equal(audit.includes(content), false);
+  assert.equal(audit.includes('"state":"completed"'), true);
+});

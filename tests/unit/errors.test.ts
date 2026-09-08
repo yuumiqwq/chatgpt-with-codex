@@ -14,6 +14,7 @@ test("exposes the executor error codes", () => {
     "CODEX_UNAVAILABLE",
     "CODEX_PROTOCOL_ERROR",
     "CODEX_EXECUTION_FAILED",
+    "CODEX_THREAD_BUSY",
     "EXECUTOR_STALLED",
     "DSH_UNAVAILABLE",
     "DSH_PROTOCOL_ERROR",

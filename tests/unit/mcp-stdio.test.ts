@@ -85,11 +85,14 @@ test("MCP and Codex client metadata use the shared package VERSION, and stdio re
       "control_task",
       "create_project",
       "generate_controlled_patch",
+      "host_capabilities",
+      "list_workspaces",
       "refine_controlled_patch",
       "run_task",
       "submit_controlled_patch",
       "task_result",
-      "validate_controlled_patch"
+      "validate_controlled_patch",
+      "wait_task"
     ]);
 
     const schemas = new Map(listed.tools.map((tool) => [tool.name, tool.inputSchema as {

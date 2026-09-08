@@ -1,6 +1,9 @@
 # MCP tool reference
 
-This is the tool surface of Engineering Bridge V1 (1.4.2). The local STDIO MCP server exposes thirteen tools.
+This fork exposes sixteen tools by default, including workspace discovery,
+task waiting and host capability reporting. Enabling the optional host policy
+adds nine tools, for twenty-five total. See [host operations](host-operations.md)
+for their configuration and access boundaries.
 
 ## `run_task`
 
@@ -20,6 +23,12 @@ Conditional fields:
 - `partial_output`: present only when a genuine interrupt produced real partial output (for example, DSH cached partial stdout or the last completed Codex agent message). The task state is still `failed`; `partial_output` is never completed `output` and never appears in `error`.
 
 `evidence` contains bounded command-execution and file-change items. When the existing bounds truncate or evict evidence, explicit markers are returned: strings cut by the size bound end with `[truncated]`, an oversized changes list gains a `[truncated: N additional changes omitted]` entry, and evidence evicted by the total count limit is reported through a synthetic `evidence-drop` item. These markers mean the diagnostic information is incomplete.
+
+## `wait_task`
+
+Inputs: `task_id` and optional `timeout_seconds`, default 25 and range 1–45.
+Returns the same view as `task_result` after the task becomes ready or waiting
+times out. Timeout/cancellation never interrupts or accepts the task.
 
 ## `control_task`
 

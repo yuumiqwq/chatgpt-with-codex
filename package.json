@@ -1,11 +1,12 @@
 {
   "name": "engineering-bridge",
-  "version": "1.4.2",
+  "version": "1.5.0-local.1",
   "description": "A local MCP bridge for supervised read-only Codex and DSH tasks with controlled patch application.",
   "type": "module",
   "files": [
     "dist/src/**",
     "config/workspaces.example.json",
+    "config/host-policy.example.json",
     "docs/**",
     "README.md",
     "README.zh-CN.md",

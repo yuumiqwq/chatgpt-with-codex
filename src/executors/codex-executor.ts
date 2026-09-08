@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { relative } from "node:path";
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
 import { CoreError, serializeError } from "../core/errors.js";
 import { VERSION } from "../version.js";
@@ -15,7 +16,8 @@ import {
 } from "./executor.js";
 
 export type ProcessStarter = (executable: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
-const ENVIRONMENT_ALLOWLIST = ["PATH", "HOME", "CODEX_HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME"] as const;
+const ENVIRONMENT_ALLOWLIST = ["PATH", "HOME", "CODEX_HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME",
+  "SystemRoot", "WINDIR", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"] as const;
 const MAX_EVIDENCE = 50;
 const MAX_TEXT = 16_384;
 const MAX_EVIDENCE_BYTES = 65_536;
@@ -51,6 +53,9 @@ function failedTurn(turn: Record<string, unknown>): ExecutorResult {
 function environment(host: Readonly<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   for (const key of ENVIRONMENT_ALLOWLIST) if (host[key]) result[key] = host[key];
+  if (host.ENGINEERING_BRIDGE_CODEX_FORWARD_PROXY === "1") {
+    for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) if (host[key]) result[key] = host[key];
+  }
   return result;
 }
 function object(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null; }
@@ -83,6 +88,9 @@ export class CodexExecutor implements Executor {
     private readonly timing: ExecutorTiming & { readonly rpcCallTimeoutMs?: number } = DEFAULT_EXECUTOR_TIMING) {}
 
   async execute(request: ExecutorRequest): Promise<ExecutorResult> {
+    const resumeFromPath = request.threadPath !== undefined &&
+      (request.threadHome === undefined || this.hostEnvironment.CODEX_HOME === undefined ||
+        relative(this.hostEnvironment.CODEX_HOME, request.threadHome) !== "");
     const executorStartedAt = new Date().toISOString();
     const withDiagnostics = (result: ExecutorResult): ExecutorResult => ({
       ...result,
@@ -96,7 +104,7 @@ export class CodexExecutor implements Executor {
     let child: ChildProcessWithoutNullStreams;
     try {
       const options: SpawnOptionsWithoutStdio = {
-        cwd: this.workspaceRoot, shell: false, stdio: ["pipe", "pipe", "pipe"],
+        cwd: this.workspaceRoot, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
         detached: this.platform !== "win32", env: environment(this.hostEnvironment)
       };
       // Windows: a directly spawnable codex.exe is preferred; an npm-installed
@@ -108,12 +116,21 @@ export class CodexExecutor implements Executor {
       const resolved = resolveCommand(this.hostEnvironment, "codex", {
         nodeTarget: CODEX_NODE_TARGET, platform: this.platform
       });
+      const provider = this.hostEnvironment.ENGINEERING_BRIDGE_CODEX_PROVIDER;
+      const serverArgs = ["app-server", "--stdio"];
+      if (provider !== undefined) {
+        if (!/^[a-zA-Z0-9_-]+$/u.test(provider)) throw new Error("Invalid configured provider.");
+        serverArgs.push("-c", "model_provider=" + JSON.stringify(provider));
+      }
+      if (this.hostEnvironment.ENGINEERING_BRIDGE_CODEX_DISABLE_MCP === "1") {
+        serverArgs.push("-c", "mcp_servers={}");
+      }
       if (resolved.kind === "direct") {
-        child = this.startProcess(resolved.executable, ["app-server", "--stdio"], options);
+        child = this.startProcess(resolved.executable, serverArgs, options);
       } else if (resolved.kind === "node-launcher") {
-        child = this.startProcess(process.execPath, [resolved.scriptPath, "app-server", "--stdio"], options);
+        child = this.startProcess(process.execPath, [resolved.scriptPath, ...serverArgs], options);
       } else {
-        child = this.startProcess("codex", ["app-server", "--stdio"], options);
+        child = this.startProcess("codex", serverArgs, options);
       }
       this.child = child;
     } catch { return withDiagnostics(failure("CODEX_UNAVAILABLE")); }
@@ -403,7 +420,8 @@ export class CodexExecutor implements Executor {
     child.on("close", finishFromExit);
 
     try {
-      await this.call("initialize", { clientInfo: { name: "engineering-bridge", version: VERSION } });
+      await this.call("initialize", { clientInfo: { name: "engineering-bridge", version: VERSION },
+        ...(resumeFromPath ? { capabilities: { experimentalApi: true } } : {}) });
       this.notify("initialized", {});
       if (request.model !== undefined || request.reasoning_effort !== undefined) {
         const modelResult = await this.call("model/list", {});
@@ -426,10 +444,20 @@ export class CodexExecutor implements Executor {
       }
       const sandbox = request.sandbox ?? "read-only";
       const threadParams: Record<string, unknown> = { cwd: this.workspaceRoot, approvalPolicy: "never", sandbox };
-      if (request.threadId) threadParams.threadId = request.threadId;
+      if (this.hostEnvironment.ENGINEERING_BRIDGE_CODEX_PROVIDER !== undefined) {
+        threadParams.modelProvider = this.hostEnvironment.ENGINEERING_BRIDGE_CODEX_PROVIDER;
+      }
+      if (request.threadId) {
+        threadParams.threadId = request.threadId;
+        // Do not transmit the entire old history as one bounded JSONL response.
+        threadParams.excludeTurns = true;
+        if (resumeFromPath) threadParams.path = request.threadPath;
+      }
       const threadResult = await this.call(request.threadId ? "thread/resume" : "thread/start", threadParams);
       if (!object(threadResult) || !object(threadResult.thread) || typeof threadResult.thread.id !== "string") throw new Error();
+      if (request.threadId && threadResult.thread.id !== request.threadId) throw new Error("Unexpected resumed thread.");
       this.threadId = threadResult.thread.id;
+      request.onThreadId?.(this.threadId);
       const sandboxPolicy = sandbox === "workspace-write"
         ? { type: "workspaceWrite", writableRoots: [this.workspaceRoot], networkAccess: false }
         : { type: "readOnly", networkAccess: false };

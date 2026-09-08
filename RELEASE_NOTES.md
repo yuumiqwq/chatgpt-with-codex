@@ -1,5 +1,13 @@
 # Release notes
 
+## v1.5.0-local.1
+
+Local fork release: cancellable task waiting, optional administrator-configured
+host file operations, validated workspace configuration reload, and native
+Codex continuation. Ordinary and resumed model tasks remain read-only. Host
+commands are separately enabled and run with current OS account privileges.
+See [host operations](docs/host-operations.md) for configuration and limits.
+
 ## v1.4.2
 
 v1.4.2 is a correctness release for controlled initial commits in fresh Git repositories with no existing commit.

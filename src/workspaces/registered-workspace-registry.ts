@@ -60,6 +60,15 @@ export class RegisteredWorkspaceRegistry {
     return registration.root;
   }
 
+  replaceWith(next: RegisteredWorkspaceRegistry): void {
+    this.registrations.clear();
+    this.canonicalRoots.clear();
+    for (const [id, registration] of next.registrations) {
+      this.registrations.set(id, { ...registration });
+    }
+    for (const [root, id] of next.canonicalRoots) this.canonicalRoots.set(root, id);
+  }
+
   list(query = "") {
     const needle = query.trim().normalize("NFKC").toLowerCase();
     return [...this.registrations].map(([id, entry]) => ({

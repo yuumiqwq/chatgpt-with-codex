@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "enabled": false,
+  "read_roots": [],
+  "write_roots": [],
+  "command_roots": [],
+  "commands_enabled": false,
+  "codex_homes": [],
+  "protected_paths": []
+}

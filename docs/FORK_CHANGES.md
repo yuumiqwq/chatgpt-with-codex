@@ -1,5 +1,12 @@
 # Local fork changes
 
+The fork provides cancellable `wait_task` long polling and an optional host
+interface. It supports binary file copies, reviewed text replacement,
+individual moves/deletes, validated workspace configuration reloads, and native
+Codex continuation with read-only turns. Host commands require a separate opt-in
+and run with OS account privileges; file roots are not a command sandbox.
+See [host operations](host-operations.md) for settings and limits.
+
 This fork adds `list_workspaces` to discover registered project names, IDs,
 paths, and controlled-write authorization. Its optional query uses a
 case-insensitive substring filter; the calling model interprets natural

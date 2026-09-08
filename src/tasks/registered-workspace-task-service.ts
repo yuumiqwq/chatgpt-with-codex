@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { isId, newId } from "../core/ids.js";
 import { serializeError } from "../core/errors.js";
 import type { Id } from "../core/ids.js";
@@ -41,7 +43,7 @@ export type ControlledPatchTaskRestore = {
   readonly source?: "submitted" | undefined;
 };
 
-export type ExecutorFactory = (executor: ExecutorName, workspaceRoot: string) => Executor;
+export type ExecutorFactory = (executor: ExecutorName, workspaceRoot: string, codexHome?: string) => Executor;
 export type CompletedOutputTransform = (output: string) => string;
 
 export type RegisteredWorkspaceTaskState = "queued" | "running" | "completed" | "failed";
@@ -94,6 +96,7 @@ type InteractiveRecord = {
   state: ControlledTaskState; request: NormalizedRegisteredWorkspaceTaskRequest; evidence: readonly ExecutorEvidence[];
   executor?: Executor | undefined; threadId?: string | undefined; output?: string | undefined;
   partialOutput?: string | undefined; diagnostics?: ExecutorDiagnostics | undefined; error?: SerializedError | undefined;
+  executionRoot?: string; codexHome?: string; rolloutPath?: string;
 };
 
 const MAX_TERMINAL_TASK_HISTORY = 100;
@@ -220,6 +223,39 @@ export class RegisteredWorkspaceTaskService {
     return { taskId };
   }
 
+  hasPendingTasks(): boolean {
+    return [...this.tasks.values()].some(task => task.state === "queued" || task.state === "running") ||
+      [...this.interactive.values()].some(task => task.state === "queued" ||
+        task.state === "running" || task.state === "waiting_for_supervisor_review");
+  }
+
+  // Called only after host policy validates an existing local session and cwd.
+  // It resumes through the native executor, with the same read-only turn policy.
+  resumeCodexThread(request: {
+    threadId: string; cwd: string; codexHome: string; instruction: string;
+    model?: string; reasoning_effort?: string; rolloutPath?: string;
+  }): { taskId: Id } {
+    for (const record of this.interactive.values()) {
+      if (record.threadId === request.threadId &&
+          (record.state === "queued" || record.state === "running" || record.state === "waiting_for_supervisor_review")) {
+        throw new CoreError("CODEX_THREAD_BUSY");
+      }
+    }
+    const taskId = newId();
+    this.interactive.set(taskId, {
+      state: "queued", evidence: [], threadId: request.threadId,
+      executionRoot: request.cwd, codexHome: request.codexHome,
+      ...(request.rolloutPath === undefined ? {} : { rolloutPath: request.rolloutPath }),
+      request: {
+        workspace_id: "native-session", executor: "codex", instruction: request.instruction,
+        ...(request.model === undefined ? {} : { model: request.model }),
+        ...(request.reasoning_effort === undefined ? {} : { reasoning_effort: request.reasoning_effort })
+      }
+    });
+    queueMicrotask(() => void this.executeInteractive(taskId));
+    return { taskId };
+  }
+
   taskView(taskId: unknown): ControlledTaskView | undefined {
     if (!isId(taskId)) return undefined;
     const record = this.interactive.get(taskId);
@@ -264,6 +300,26 @@ export class RegisteredWorkspaceTaskService {
         ? {}
         : { partial_output: record.partialOutput })
     };
+  }
+
+  async waitTask(
+    taskId: unknown,
+    timeoutSeconds = 25,
+    signal?: AbortSignal
+  ): Promise<ControlledTaskView | undefined> {
+    const boundedTimeoutSeconds = Number.isFinite(timeoutSeconds)
+      ? Math.min(45, Math.max(1, timeoutSeconds))
+      : 25;
+    const deadline = performance.now() + boundedTimeoutSeconds * 1000;
+    while (true) {
+      signal?.throwIfAborted();
+      const view = this.taskView(taskId);
+      const remaining = deadline - performance.now();
+      if (view === undefined || view.ready === true || remaining <= 0) return view;
+      // Waiting or cancelling this wait never interrupts the underlying task.
+      await sleep(Math.min(100, remaining), undefined,
+        signal === undefined ? {} : { signal });
+    }
   }
 
   async controlTask(taskId: unknown, action: "continue" | "steer" | "interrupt" | "accept", instruction?: string): Promise<ControlledTaskView> {
@@ -337,14 +393,17 @@ export class RegisteredWorkspaceTaskService {
     if (!record) return;
     record.state = "running";
     try {
-      const registration = this.registry.resolveExecution(record.request.workspace_id);
-      const executor = this.executorFactory(record.request.executor, registration.root);
+      const root = record.executionRoot ?? this.registry.resolveExecution(record.request.workspace_id).root;
+      const executor = this.executorFactory(record.request.executor, root, record.codexHome);
       record.executor = executor;
       const result = await executor.execute({ taskId, instruction: record.request.instruction,
         sandbox: "read-only",
         ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
+        ...(record.rolloutPath === undefined ? {} : { threadPath: record.rolloutPath }),
+        ...(record.codexHome === undefined ? {} : { threadHome: record.codexHome }),
         ...(record.request.model !== undefined ? { model: record.request.model } : {}),
         ...(record.request.reasoning_effort !== undefined ? { reasoning_effort: record.request.reasoning_effort } : {}),
+        onThreadId: (threadId) => { record.threadId = threadId; },
         onEvidence: (items) => { record.evidence = items; } });
       record.executor = undefined;
       record.threadId = result.threadId ?? record.threadId;

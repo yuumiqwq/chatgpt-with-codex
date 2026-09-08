@@ -84,7 +84,7 @@ function fakeStarter(behavior: FakeBehavior, invocations: Invocation[]): Process
             if (message.method === "model/list") {
               result = { data: behavior.modelList ?? [] };
             }
-            if (message.method === "thread/start") result = { thread: { id: "thread-1" } };
+            if (message.method === "thread/start" || message.method === "thread/resume") result = { thread: { id: "thread-1" } };
             if (message.method === "turn/start") result = { turn: { id: "turn-1" } };
             queueMicrotask(() => {
               stdout.write(`${JSON.stringify({ id: message.id, result })}\n`);
@@ -898,6 +898,56 @@ test("accepts a complete UTF-8 agent message at the 1 MiB wire boundary", async 
   const result = await executor.execute({ taskId: TASK_ID, instruction: "x" });
   assert.equal(result.kind, "completed");
   if (result.kind === "completed") assert.equal(result.output, output);
+});
+
+test("native resume uses the requested thread and configured provider without changing read-only policy", async () => {
+  const invocations: Invocation[] = [];
+  const nativeIds: string[] = [];
+  const executor = new CodexExecutor(TRUSTED_CWD, fakeStarter({ appServerOutput: "continued" }, invocations), {
+    CODEX_HOME: "/trusted/codex-home", ENGINEERING_BRIDGE_CODEX_PROVIDER: "openai",
+    ENGINEERING_BRIDGE_CODEX_DISABLE_MCP: "1"
+  }, "linux");
+  const result = await executor.execute({
+    taskId: TASK_ID, instruction: "continue", threadId: "thread-1", onThreadId: id => nativeIds.push(id)
+  });
+  assert.equal(result.kind, "completed");
+  assert.deepEqual(nativeIds, ["thread-1"]);
+  assert.equal(invocations[0]!.options.windowsHide, true);
+  assert.deepEqual(invocations[0]!.args, ["app-server", "--stdio", "-c", 'model_provider="openai"', "-c", "mcp_servers={}"]);
+  const messages = invocations[0]!.stdin.trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(messages.some(message => message.method === "thread/start"), false);
+  const resume = messages.find(message => message.method === "thread/resume");
+  assert.equal(resume.params.threadId, "thread-1");
+  assert.equal(resume.params.modelProvider, "openai");
+  assert.equal(resume.params.sandbox, "read-only");
+  assert.equal(resume.params.excludeTurns, true);
+  const turn = messages.find(message => message.method === "turn/start");
+  assert.deepEqual(turn.params.sandboxPolicy, { type: "readOnly", networkAccess: false });
+});
+
+test("cross-home resume uses an explicitly verified rollout path and refuses a different returned UUID", async () => {
+  const invocations: Invocation[] = [];
+  const executor = new CodexExecutor(TRUSTED_CWD, fakeStarter({ appServerOutput: "continued" }, invocations), {
+    CODEX_HOME: "/authenticated/home", ENGINEERING_BRIDGE_CODEX_PROVIDER: "openai"
+  }, "linux");
+  const result = await executor.execute({
+    taskId: TASK_ID, instruction: "continue", threadId: "thread-1",
+    threadHome: "/legacy/home", threadPath: "/legacy/home/sessions/verified.jsonl"
+  });
+  assert.equal(result.kind, "completed");
+  const messages = invocations[0]!.stdin.trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(messages[0].params.capabilities.experimentalApi, true);
+  const resume = messages.find(message => message.method === "thread/resume");
+  assert.equal(resume.params.path, "/legacy/home/sessions/verified.jsonl");
+  assert.equal(resume.params.excludeTurns, true);
+  assert.equal(invocations[0]!.options.env?.CODEX_HOME, "/authenticated/home");
+  const rejected = await executor.execute({
+    taskId: TASK_ID, instruction: "do not run", threadId: "wrong-id",
+    threadHome: "/legacy/home", threadPath: "/legacy/home/sessions/verified.jsonl"
+  });
+  assert.equal(rejected.kind, "failed");
+  const rejectedMessages = invocations[1]!.stdin.trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(rejectedMessages.some(message => message.method === "turn/start"), false);
 });
 
 test("rejects a terminated UTF-8 agent message one byte beyond 1 MiB without leaking its contents", async () => {

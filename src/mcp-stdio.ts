@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
-import { isAbsolute, normalize } from "node:path";
+import { isAbsolute, normalize, relative, resolve } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -11,6 +11,9 @@ import { CodexExecutor } from "./executors/codex-executor.js";
 import { DshExecutor } from "./executors/dsh-executor.js";
 import { VERSION } from "./version.js";
 import { CoreError, serializeError } from "./core/errors.js";
+import { registerTaskResultTools } from "./task-result-tools.js";
+import { HostError, HostPolicy } from "./host/host-policy.js";
+import { registerHostTools } from "./host/host-tools.js";
 import { RegisteredWorkspaceTaskService } from "./tasks/registered-workspace-task-service.js";
 import { ControlledPatchService } from "./tasks/controlled-patch-service.js";
 import { ControlledPatchValidationService } from "./tasks/controlled-patch-validation-service.js";
@@ -57,6 +60,17 @@ function isProjectRootEntry(entry: WorkspaceEntry | ProjectRootEntry): entry is 
   return "kind" in entry;
 }
 
+function parseWorkspaceConfig(source: string) {
+  const entries = WorkspaceConfigSchema.parse(JSON.parse(source.replace(/^\uFEFF/u, "")));
+  new RegisteredWorkspaceRegistry(entries.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry)));
+  for (const entry of entries.filter(isProjectRootEntry)) {
+    if (!isAbsolute(entry.root) || normalize(entry.root) !== entry.root) {
+      throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
+    }
+  }
+  return entries;
+}
+
 function toValidationStep(
   step: z.infer<typeof ValidationStepSchema>
 ): ValidationStep {
@@ -101,7 +115,7 @@ async function main(): Promise<void> {
   const configPath = process.argv[2];
   if (configPath === undefined) throw new Error("Workspace configuration path is required.");
   const configSource = await readFile(configPath, "utf8");
-  const parsed = WorkspaceConfigSchema.parse(JSON.parse(configSource.startsWith("\uFEFF") ? configSource.slice(1) : configSource));
+  const parsed = parseWorkspaceConfig(configSource);
   const workspaceEntries = parsed.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry));
   const projectRootEntries = parsed.filter(isProjectRootEntry);
   for (const entry of projectRootEntries) {
@@ -121,16 +135,20 @@ async function main(): Promise<void> {
       // A manual or earlier managed registration already owns the id or root.
     }
   }
-  const onboarding = new WorkspaceOnboardingService(
+  let onboarding = new WorkspaceOnboardingService(
     registry,
     catalog,
     projectRootEntries.map(({ root }) => root)
   );
   const service = new RegisteredWorkspaceTaskService(
     registry,
-    (executor, workspaceRoot) => {
+    (executor, workspaceRoot, codexHome) => {
       switch (executor) {
-        case "codex": return new CodexExecutor(workspaceRoot);
+        case "codex": {
+          const authHome = process.env.ENGINEERING_BRIDGE_CODEX_AUTH_HOME ?? codexHome;
+          return new CodexExecutor(workspaceRoot, undefined,
+            authHome === undefined ? process.env : { ...process.env, CODEX_HOME: authHome });
+        }
         case "dsh": return new DshExecutor(workspaceRoot);
       }
     }
@@ -153,6 +171,29 @@ async function main(): Promise<void> {
     validationRunner
   );
   const server = new McpServer({ name: "engineering-bridge", version: VERSION });
+
+  const hostPolicy = await HostPolicy.load(resolve(configPath) + ".host-policy.json");
+  registerHostTools(server, hostPolicy, service, {
+    validateText: (path, content) => {
+      if (relative(resolve(configPath), path) === "") parseWorkspaceConfig(content);
+    },
+    reloadWorkspaces: async () => {
+      if (service.hasPendingTasks()) throw new HostError("HOST_TASKS_PENDING", "Finish or accept pending tasks before reloading workspaces.");
+      const entries = parseWorkspaceConfig(await readFile(configPath, "utf8"));
+      const manual = entries.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry));
+      const roots = entries.filter(isProjectRootEntry).map(entry => entry.root);
+      for (const root of roots) {
+        if (!isAbsolute(root) || normalize(root) !== root) throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
+      }
+      const next = new RegisteredWorkspaceRegistry(manual);
+      for (const entry of catalog.entries()) {
+        if (!next.findByRoot(entry.root)) next.registerManaged(entry.id, entry.root, entry.allowWrite);
+      }
+      registry.replaceWith(next);
+      onboarding = new WorkspaceOnboardingService(registry, catalog, roots);
+      return { reloaded: true, workspaces: registry.list() };
+    }
+  });
 
   server.registerTool("list_workspaces", {
     description: "Discover registered local projects before running tasks when the user provides a project name or description instead of workspace_id. Optional query filters name, path or ID by case-insensitive substring. Omit query to list all registered projects and use their names to interpret the user's meaning. Return all ambiguous candidates; ask the user when the intended project is unclear. Never invent IDs. This read-only tool only reads the workspace registry; it does not scan project files or register directories.",
@@ -183,30 +224,7 @@ async function main(): Promise<void> {
     }
   });
 
-  server.registerTool("task_result", {
-    description: "Retrieve the completed output or safe error for a task. This tool is read-only.",
-    inputSchema: { task_id: z.string() }
-  }, ({ task_id }) => {
-    const view = service.taskView(task_id);
-    if (view === undefined) return unknownTask();
-    const taskView = { task_id: view.taskId, state: view.state,
-      ...(view.source === undefined ? {} : { source: view.source }),
-      ...(view.executor === undefined ? {} : { executor: view.executor }),
-      ...(view.threadId === undefined ? {} : { thread_id: view.threadId }),
-      ready: view.ready,
-      ...(view.output === undefined ? {} : { output: view.output }),
-      ...(view.review_output === undefined ? {} : { review_output: view.review_output }),
-      ...(view.partial_output === undefined ? {} : { partial_output: view.partial_output }),
-      evidence: view.evidence,
-      ...(view.diagnostics === undefined ? {} : { diagnostics: view.diagnostics }),
-      ...(view.error === undefined ? {} : { error: view.error }) };
-    return jsonContent({
-      ...taskView,
-      mcp_diagnostics: {
-        serialized_task_view_bytes: Buffer.byteLength(JSON.stringify(taskView), "utf8")
-      }
-    });
-  });
+  registerTaskResultTools(server, service);
 
   server.registerTool("control_task", {
     description: "Steer or interrupt a running task, continue a reviewed task, or accept reviewed output.",
