@@ -1,3 +1,7 @@
+## Version 1.6 update
+
+The current lifecycle and access model are documented in [work management](work-management.md). New Codex work defaults to danger-full-access with OS account filesystem/network privileges. Old read-only/supervisor-acceptance assumptions and confirmation-token requirements below are historical. Public native resume and patch generation are replaced by open_work/continue_work/run_temp. Host policy supports follow_links for migrated directory junctions, resolving file destinations against configured roots.
+
 # Optional host operations
 
 This fork can manage ordinary local files outside registered Git workspaces and

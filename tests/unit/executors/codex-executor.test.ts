@@ -18,6 +18,19 @@ const TASK_ID_VALUE = "550e8400-e29b-41d4-a716-446655440000";
 if (!isId(TASK_ID_VALUE)) throw new Error("Test task ID must be a UUID v4.");
 const TASK_ID = TASK_ID_VALUE;
 const TRUSTED_CWD = "/trusted/workspace";
+
+test("ephemeral full-access turns use native flags without naming persistent history", async () => {
+  const invocations: Invocation[] = [];
+  const executor = new CodexExecutor(TRUSTED_CWD, fakeStarter({ appServerOutput: "done" }, invocations));
+  const result = await executor.execute({ taskId: TASK_ID, instruction: "one off", ephemeral: true,
+    sandbox: "danger-full-access", threadName: "must not persist" });
+  assert.equal(result.kind, "completed");
+  const messages = invocations[0]!.stdin.trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(messages.find(item => item.method === "thread/start").params.ephemeral, true);
+  assert.equal(messages.find(item => item.method === "thread/start").params.sandbox, "danger-full-access");
+  assert.deepEqual(messages.find(item => item.method === "turn/start").params.sandboxPolicy, { type: "dangerFullAccess" });
+  assert.equal(messages.some(item => item.method === "thread/name/set"), false);
+});
 const SHORT_TIMING = {
   executionTimeoutMs: 30,
   interruptGraceMs: 10,
@@ -913,7 +926,7 @@ test("native resume uses the requested thread and configured provider without ch
   assert.equal(result.kind, "completed");
   assert.deepEqual(nativeIds, ["thread-1"]);
   assert.equal(invocations[0]!.options.windowsHide, true);
-  assert.deepEqual(invocations[0]!.args, ["app-server", "--stdio", "-c", 'model_provider="openai"', "-c", "mcp_servers={}"]);
+  assert.deepEqual(invocations[0]!.args, ["app-server", "--stdio", "-c", 'model_provider="openai"', "-c", 'mcp_servers.engineering-bridge.enabled=false']);
   const messages = invocations[0]!.stdin.trim().split("\n").map(line => JSON.parse(line));
   assert.equal(messages.some(message => message.method === "thread/start"), false);
   const resume = messages.find(message => message.method === "thread/resume");

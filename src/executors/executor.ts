@@ -3,7 +3,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Id } from "../core/ids.js";
 import type { SerializedError } from "../core/errors.js";
 
-export type SandboxMode = "read-only" | "workspace-write";
+export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export interface EvidenceChange { readonly path: string; readonly diff: string }
 export interface ExecutorEvidence {
@@ -15,6 +15,8 @@ export interface ExecutorEvidence {
 }
 
 export interface ExecutorRequest {
+  readonly ephemeral?: boolean;
+  readonly threadName?: string;
   readonly taskId: Id;
   readonly instruction: string;
   readonly sandbox?: SandboxMode;

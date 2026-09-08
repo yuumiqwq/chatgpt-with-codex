@@ -69,7 +69,7 @@ export function registerHostTools(
     ...policy.config, policy_file: policy.policyPath,
     file_limit_mib: 512, text_write_limit_mib: 2, command_output_limit_bytes: 65_536,
     command_max_seconds: 45, gui_control: false,
-    resumed_tasks: { default: "workspace-write", options: ["read-only", "workspace-write"], write_scope: "original cwd within write_roots" },
+    work_execution: { default: "danger-full-access", options: ["read-only", "workspace-write", "danger-full-access"], write_scope: "full access uses OS account privileges; workspace-write limits file writes and Git metadata" },
     policy_changes: "local administrator plus runtime restart",
     commands_are_os_sandboxed: false
   }));
@@ -129,41 +129,27 @@ export function registerHostTools(
   }, ({ source, destination, create_parents }) => safe("copy", { source, destination }, () => files.copy(source, destination, create_parents)));
 
   server.registerTool("move_file", {
-    description: "Move one reviewed regular file to an absent allowed destination. Requires its SHA-256 and exact MOVE after user authorization. Copies and verifies before removing the source; directories are not supported.",
+    description: "Move one reviewed regular file to an absent allowed destination. Requires its SHA-256 to detect intervening changes. Copies and verifies before removing the source; directories are not supported.",
     inputSchema: { source: pathSchema, destination: pathSchema, expected_sha256: hash,
-      create_parents: z.boolean().optional().default(false), confirmation: z.literal("MOVE") },
+      create_parents: z.boolean().optional().default(false) },
     annotations: { ...mutation, destructiveHint: true }
   }, ({ source, destination, expected_sha256, create_parents }) => safe("move", { source, destination }, () => files.move(source, destination, expected_sha256, create_parents)));
 
   server.registerTool("delete_file", {
-    description: "Delete one reviewed regular file or an empty directory after explicit user authorization and exact DELETE. Files require expected_sha256; recursive deletion and deleting configured roots are unsupported.",
-    inputSchema: { path: pathSchema, expected_sha256: hash.optional(), confirmation: z.literal("DELETE") },
+    description: "Delete one reviewed regular file or an empty directory using its current SHA-256. Files require expected_sha256; recursive deletion and deleting configured roots are unsupported.",
+    inputSchema: { path: pathSchema, expected_sha256: hash.optional() },
     annotations: { ...mutation, destructiveHint: true }
   }, ({ path, expected_sha256 }) => safe("delete", { path }, () => files.remove(path, expected_sha256)));
 
   server.registerTool("run_host_command", {
-    description: "Run an explicitly authorized host command with exact EXECUTE. Requires administrator opt-in. Uses an absolute executable and argv without implicit shell, hidden windows, a 1-45 second deadline and bounded output. This is NOT an OS sandbox: commands have the current account's filesystem and network rights. Do not use it for desktop interaction without user permission. Cancellation kills this command, unlike wait_task cancellation.",
+    description: "Run a host command. Requires administrator opt-in. Uses an absolute executable and argv without implicit shell, hidden windows, a 1-45 second deadline and bounded output. This is NOT an OS sandbox: commands have the current account's filesystem and network rights. Do not use it for desktop interaction without user permission. Cancellation kills this command, unlike wait_task cancellation.",
     inputSchema: { executable: pathSchema, args: z.array(z.string().max(32_767)).max(256).default([]),
-      cwd: pathSchema, timeout_seconds: z.number().min(1).max(45).default(25),
-      confirmation: z.literal("EXECUTE") },
+      cwd: pathSchema, timeout_seconds: z.number().min(1).max(45).default(25) },
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
   }, ({ executable, args, cwd, timeout_seconds }, { signal }) => safe("command", { executable, cwd },
     () => runHostCommand(policy, executable, args, cwd, timeout_seconds, signal)));
 
-  server.registerTool("resume_codex_thread", {
-    description: "Continue an explicitly requested, idle native Codex thread using the original UUID and cwd. Use list_codex_threads first when the user gives a title or project rather than an ID. Defaults to workspace-write so Codex can directly edit and test in its original project directory; that cwd must be authorized by host write_roots. Use access=read-only for analysis without edits. Writes happen during execution, before supervisor review, and interruption does not roll them back. Returns task_id and access; wait_task and control_task retain that access for subsequent turns. Network is disabled. Do not resume a thread active in another client.",
-    inputSchema: { thread_id: z.string().uuid(), instruction: z.string().min(1).max(200_000),
-      model: z.string().min(1).optional(), reasoning_effort: z.string().min(1).optional(),
-      access: z.enum(["read-only", "workspace-write"]).default("workspace-write") },
-    annotations: { ...mutation, destructiveHint: true }
-  }, ({ thread_id, instruction, model, reasoning_effort, access }) => safe("resume", { thread_id, access }, async () => {
-    const session = await locateCodexSession(policy, thread_id);
-    if (access === "workspace-write") await policy.check(session.cwd, "write");
-    const { taskId } = service.resumeCodexThread({ ...session, instruction, access,
-      ...(model === undefined ? {} : { model }),
-      ...(reasoning_effort === undefined ? {} : { reasoning_effort }) });
-    return { task_id: taskId, thread_id: session.threadId, cwd: session.cwd, access };
-  }));
+
 
   if (options.reloadWorkspaces) {
     server.registerTool("reload_workspace_config", {

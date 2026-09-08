@@ -1,3 +1,9 @@
+## Current fork interface (1.6)
+
+Durable work, native ephemeral turns and direct editing replace the old per-call conversation and acceptance flow. Read [work management](docs/work-management.md) and the [current tools](docs/tools.md). Default Codex work access is danger-full-access; read-only and workspace-write are selectable. Public literal confirmation parameters and overlapping execution tools are removed. Existing controlled-patch records remain usable.
+
+The upstream material below is historical where it refers to old APIs, read-only defaults or supervisor acceptance. The linked current documents and tools/list describe this fork.
+
 # Engineering Bridge
 
 **Connect Chat directly to local Codex or DSH: no more shuttling prompts and results—Chat dispatches, supervises, and accepts the executor's work.**

@@ -1,3 +1,13 @@
+## 1.6.0-local.1
+
+- Unify create/adopt/reopen and same-UUID continuation; persist summaries, results and restart interruption state.
+- Use native ephemeral Codex execution for one-off instructions; remove overlapping run/resume/generate/refine tools.
+- Provide caller-managed archive, history deletion and retention without purpose categories or literal confirmation parameters.
+- Default work to full account access, including Git metadata; retain selectable restricted access.
+- Support junction history layouts and explicitly disable inherited MCP entries for subprocess execution.
+- Preserve optional controlled-patch data and validation/apply/commit operations.
+
+
 # Release notes
 
 ## v1.5.0-local.3

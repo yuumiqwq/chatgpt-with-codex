@@ -1,4 +1,4 @@
-import { lstat, open, readdir } from "node:fs/promises";
+import { lstat, open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { absolutePath, checkAncestors, HostError, HostPolicy } from "./host-policy.js";
@@ -15,14 +15,14 @@ export async function locateCodexSession(policy: HostPolicy, threadId: string) {
   const wanted = threadId.toLowerCase();
   let inspected = 0;
   for (const codexHome of policy.config.codex_homes) {
-    await checkAncestors(codexHome);
+    if (!policy.config.follow_links) await checkAncestors(codexHome);
     for (const directory of ["sessions", "archived_sessions"]) {
       const pending = [{ path: join(codexHome, directory), depth: 0 }];
       while (pending.length) {
         const current = pending.pop()!;
         let entries;
         try {
-          await checkAncestors(current.path);
+          if (!policy.config.follow_links) await checkAncestors(current.path);
           entries = await readdir(current.path, { withFileTypes: true });
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
@@ -30,12 +30,13 @@ export async function locateCodexSession(policy: HostPolicy, threadId: string) {
         }
         for (const entry of entries) {
           if (++inspected > 100_000) throw new HostError("CODEX_SESSION_SCAN_LIMIT", "The session search exceeded its bounded entry limit.");
-          if (entry.isSymbolicLink()) continue;
+          if (entry.isSymbolicLink() && !policy.config.follow_links) continue;
           const path = join(current.path, entry.name);
-          if (entry.isDirectory() && current.depth < 4) {
+          const info = entry.isSymbolicLink() ? await stat(path) : entry;
+          if (info.isDirectory() && current.depth < 4) {
             pending.push({ path, depth: current.depth + 1 });
-          } else if (entry.isFile() && entry.name.toLowerCase().includes(wanted) && entry.name.endsWith(".jsonl")) {
-            await checkAncestors(path);
+          } else if (info.isFile() && entry.name.toLowerCase().includes(wanted) && entry.name.endsWith(".jsonl")) {
+            if (!policy.config.follow_links) await checkAncestors(path);
             if ((await lstat(path)).nlink > 1) continue;
             const handle = await open(path, "r");
             let metadata: { type?: string; payload?: { id?: string; cwd?: string } };

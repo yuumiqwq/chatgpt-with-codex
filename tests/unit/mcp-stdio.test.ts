@@ -39,7 +39,7 @@ test("workspace configuration strips exactly one leading UTF-8 BOM", async () =>
       }
       await client.connect(transport);
       const listed = await client.listTools();
-      assert.equal(listed.tools.some(({ name }) => name === "run_task"), true);
+      assert.equal(listed.tools.some(({ name }) => name === "run_temp"), true);
     } finally {
       try {
         await client.close();
@@ -50,231 +50,52 @@ test("workspace configuration strips exactly one leading UTF-8 BOM", async () =>
   }
 });
 
-test("MCP and Codex client metadata use the shared package VERSION, and stdio returns structured tool errors", async () => {
-  const { VERSION } = await import(VERSION_MODULE.href) as { VERSION: unknown };
-  const packageVersion = (JSON.parse(readFileSync("package.json", "utf8")) as { version: unknown }).version;
-
-  assert.equal(VERSION, packageVersion);
-  for (const path of ["src/mcp-stdio.ts", "src/executors/codex-executor.ts"]) {
-    const source = readFileSync(path, "utf8");
-    assert.match(source, /import\s+\{\s*VERSION\s*\}\s+from\s+["'][^"']*version\.js["'];/u);
-    assert.match(source, /version:\s*VERSION\b/u);
-  }
-
-  const configPath = join(mkdtempSync(join(tmpdir(), "engineering-bridge-mcp-")), "workspaces.json");
-  writeFileSync(configPath, "[]\n");
-  const client = new Client({ name: "test-client", version: "1.0.0" });
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [join(process.cwd(), "dist/src/mcp-stdio.js"), configPath],
-    cwd: process.cwd(),
-    stderr: "pipe"
-  });
-
+test("MCP exposes unified work operations and rejects removed APIs", async t => {
+  const dir = mkdtempSync(join(tmpdir(), "bridge-work-surface-"));
+  t.after(() => rmSync(dir, {recursive:true,force:true}));
+  const configPath=join(dir,"workspaces.json");
+  writeFileSync(configPath,"[]");
+  const client=new Client({name:"test",version:"1"});
+  await client.connect(new StdioClientTransport({command:process.execPath,
+    args:[join(process.cwd(),"dist/src/mcp-stdio.js"),configPath],stderr:"pipe"}));
   try {
-    await client.connect(transport);
-    assert.equal(client.getServerVersion()?.version, VERSION);
-
-    const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map(({ name }) => name).sort(), [
-      "apply_controlled_patch",
-      "authorize_workspace_write",
-      "bind_project",
-      "commit_controlled_patch",
-      "configure_validation_profile",
-      "control_task",
-      "create_project",
-      "generate_controlled_patch",
-      "host_capabilities",
-      "list_workspaces",
-      "refine_controlled_patch",
-      "run_task",
-      "submit_controlled_patch",
-      "task_result",
-      "validate_controlled_patch",
-      "wait_task"
-    ]);
-
-    const schemas = new Map(listed.tools.map((tool) => [tool.name, tool.inputSchema as {
-      properties?: Record<string, { type?: string; minLength?: number; const?: unknown }>;
-      required?: string[];
-    }]));
-    for (const name of ["run_task", "generate_controlled_patch", "refine_controlled_patch"]) {
-      const properties = schemas.get(name)?.properties;
-      assert.equal(properties?.model?.type, "string");
-      assert.equal(properties?.model?.minLength, 1);
-      assert.equal(properties?.reasoning_effort?.type, "string");
-      assert.equal(properties?.reasoning_effort?.minLength, 1);
+    const {VERSION}=await import(VERSION_MODULE.href);
+    assert.equal(client.getServerVersion()?.version,VERSION);
+    const tools=(await client.listTools()).tools;
+    for (const name of ["open_work","list_work","continue_work","run_temp","finish_work","manage_work","work_retention"]) {
+      assert.ok(tools.some(tool=>tool.name===name));
     }
-
-    // COMMIT requires every field and the exact literal confirmation.
-    const commitSchema = schemas.get("commit_controlled_patch");
-    assert.equal(commitSchema?.properties?.confirmation?.const, "COMMIT");
-    for (const field of ["patch_task_id", "message", "confirmation"]) {
-      assert.equal(commitSchema?.required?.includes(field), true);
+    for (const name of ["run_task","resume_codex_thread","generate_controlled_patch","refine_controlled_patch"]) {
+      assert.ok(!tools.some(tool=>tool.name===name));
+      assert.equal((await client.callTool({name,arguments:{}})).isError,true);
     }
-
-    for (const [name, argumentsValue] of [
-      ["run_task", { workspace_id: "missing", instruction: "inspect", executor: "dsh", model: "gpt-5-codex" }],
-      ["generate_controlled_patch", { workspace_id: "missing", change_request: "change", executor: "dsh", reasoning_effort: "high" }],
-      ["refine_controlled_patch", { patch_task_id: "missing", change_request: "refine", executor: "dsh", model: "gpt-5-codex" }]
-    ] as const) {
-      const rejected = await client.callTool({ name, arguments: argumentsValue });
-      assert.equal(rejected.isError, true);
-      const rejectedContent = rejected.content;
-      assert.ok(Array.isArray(rejectedContent));
-      if (!Array.isArray(rejectedContent)) continue;
-      const rejectedItem = rejectedContent[0];
-      assert.equal(rejectedItem?.type, "text");
-      if (rejectedItem?.type !== "text") continue;
-      assert.equal(JSON.parse(rejectedItem.text).error.code, "UNSUPPORTED_ACTION");
-      assert.equal(JSON.stringify(rejected).includes("UNKNOWN_WORKSPACE"), false);
-      assert.equal(JSON.stringify(rejected).includes("INVALID_STATE_TRANSITION"), false);
+    for(const tool of tools)assert.equal("confirmation" in (tool.inputSchema.properties??{}),false);
+    for (const name of ["run_temp","continue_work"]) {
+      const props=tools.find(tool=>tool.name===name)!.inputSchema.properties!;
+      assert.ok(props.model);assert.ok(props.reasoning_effort);
     }
-
-    const result = await client.callTool({
-      name: "generate_controlled_patch",
-      arguments: { workspace_id: "missing", change_request: "change nothing" }
-    });
-    assert.equal(result.isError, true);
-    const resultContent = result.content;
-    assert.ok(Array.isArray(resultContent));
-    const content = resultContent[0] as { type?: string; text?: string } | undefined;
-    assert.equal(content?.type, "text");
-    if (content?.type !== "text" || typeof content.text !== "string") return;
-    assert.deepEqual(JSON.parse(content.text), {
-      error: {
-        code: "UNKNOWN_WORKSPACE",
-        message: "The requested workspace is not registered."
-      }
-    });
-
-    const refinementResult = await client.callTool({
-      name: "refine_controlled_patch",
-      arguments: { patch_task_id: "missing", change_request: "refine nothing" }
-    });
-    assert.equal(refinementResult.isError, true);
-    const refinementResultContent = refinementResult.content;
-    assert.ok(Array.isArray(refinementResultContent));
-    const refinementContent = refinementResultContent[0] as { type?: string; text?: string } | undefined;
-    assert.equal(refinementContent?.type, "text");
-    if (refinementContent?.type !== "text" || typeof refinementContent.text !== "string") return;
-    assert.deepEqual(JSON.parse(refinementContent.text), {
-      error: {
-        code: "INVALID_STATE_TRANSITION",
-        message: "The requested state transition is not allowed."
-      }
-    });
-
-    for (const argumentsValue of [
-      { workspace_id: "missing", instruction: "inspect" },
-      { workspace_id: "missing", instruction: "inspect", executor: "codex" },
-      { workspace_id: "missing", instruction: "inspect", executor: "dsh" }
-    ]) {
-      const runResult = await client.callTool({
-        name: "run_task",
-        arguments: argumentsValue
-      });
-      assert.notEqual(runResult.isError, true);
-      const runContent = runResult.content;
-      assert.ok(Array.isArray(runContent));
-      const first = runContent[0] as { type?: string; text?: string } | undefined;
-      assert.equal(first?.type, "text");
-      assert.equal(typeof first?.text, "string");
-      if (typeof first?.text === "string") {
-        const body = JSON.parse(first.text) as { task_id?: unknown };
-        assert.equal(typeof body.task_id, "string");
-      }
-    }
-
-    const unknownExecutor = await client.callTool({
-      name: "run_task",
-      arguments: {
-        workspace_id: "missing",
-        instruction: "inspect",
-        executor: "unknown"
-      }
-    });
-    assert.equal(unknownExecutor.isError, true);
-    assert.equal(JSON.stringify(unknownExecutor).includes("task_id"), false);
-  } finally {
-    await client.close();
-  }
+    const result=await client.callTool({name:"run_temp",arguments:{workspace_id:"missing",instruction:"inspect"}});
+    assert.equal(result.isError,true);
+    assert.match(JSON.stringify(result),/UNKNOWN_WORKSPACE/);
+  } finally { await client.close(); }
 });
 
-test("task_result honestly reports the fixed executor and never fabricates a thread id", async () => {
-  const configDir = mkdtempSync(join(tmpdir(), "engineering-bridge-executor-view-"));
-  const configPath = join(configDir, "workspaces.json");
-  writeFileSync(configPath, "[]\n");
-
-  const client = new Client({ name: "test-client", version: "1.0.0" });
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [join(process.cwd(), "dist/src/mcp-stdio.js"), configPath],
-    cwd: process.cwd(),
-    stderr: "pipe"
-  });
-
-  const call = async (name: string, args: Record<string, unknown>): Promise<{ isError: boolean; body: Record<string, unknown> }> => {
-    const result = await client.callTool({ name, arguments: args });
-    const content = result.content as ToolResult["content"];
-    const text = content[0]?.text ?? "";
-    let body: unknown;
-    try {
-      body = JSON.parse(text) as unknown;
-    } catch {
-      body = { raw: text };
-    }
-    return { isError: result.isError === true, body: body as Record<string, unknown> };
-  };
-
-  const waitForTerminal = async (taskId: string): Promise<Record<string, unknown>> => {
-    for (let attempt = 0; attempt < 400; attempt += 1) {
-      const poll = await call("task_result", { task_id: taskId });
-      if (poll.body.state !== "queued" && poll.body.state !== "running") return poll.body;
-      await new Promise<void>((resolve) => setTimeout(resolve, 5));
-    }
-    throw new Error("task did not reach a terminal state");
-  };
-
+test("temporary execution validates executor options before dispatch",async t=>{
+  const dir=mkdtempSync(join(tmpdir(),"bridge-temp-args-"));
+  t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const config=join(dir,"workspaces.json");writeFileSync(config,"[]");
+  const client=new Client({name:"test",version:"1"});
+  await client.connect(new StdioClientTransport({command:process.execPath,
+    args:[join(process.cwd(),"dist/src/mcp-stdio.js"),config],stderr:"pipe"}));
   try {
-    await client.connect(transport);
-
-    // Default selection is codex; the JSON carries it and no thread_id exists.
-    const codexRun = await call("run_task", {
-      workspace_id: "missing",
-      instruction: "inspect"
-    });
-    const codexTaskId = codexRun.body.task_id;
-    assert.equal(typeof codexTaskId, "string");
-    if (typeof codexTaskId !== "string") return;
-    const codexView = await waitForTerminal(codexTaskId);
-    assert.equal(codexView.executor, "codex");
-    assert.equal("thread_id" in codexView, false);
-    assert.deepEqual(codexView.error, {
-      code: "UNKNOWN_WORKSPACE",
-      message: "The requested workspace is not registered."
-    });
-
-    // Explicit dsh selection is reported as dsh, still without any thread_id.
-    const dshRun = await call("run_task", {
-      workspace_id: "missing",
-      instruction: "inspect",
-      executor: "dsh"
-    });
-    const dshTaskId = dshRun.body.task_id;
-    assert.equal(typeof dshTaskId, "string");
-    if (typeof dshTaskId !== "string") return;
-    const dshView = await waitForTerminal(dshTaskId);
-    assert.equal(dshView.executor, "dsh");
-    assert.equal("thread_id" in dshView, false);
-    assert.deepEqual(dshView.error, {
-      code: "UNKNOWN_WORKSPACE",
-      message: "The requested workspace is not registered."
-    });
-  } finally {
-    await client.close();
-  }
+    for(const executor of [undefined,"codex","dsh"]){
+      const result=await client.callTool({name:"run_temp",arguments:{workspace_id:"missing",instruction:"inspect",...(executor?{executor}:{})}});
+      assert.equal(result.isError,true);assert.match(JSON.stringify(result),/UNKNOWN_WORKSPACE/);
+    }
+    const unsupported=await client.callTool({name:"run_temp",arguments:{workspace_id:"missing",instruction:"inspect",executor:"dsh",model:"any"}});
+    assert.match(JSON.stringify(unsupported),/UNSUPPORTED_ACTION/);
+    assert.equal((await client.callTool({name:"run_temp",arguments:{workspace_id:"missing",instruction:"inspect",executor:"unknown"}})).isError,true);
+  }finally{await client.close();}
 });
 
 test("bind_project and create_project register workspaces inside approved project roots", async () => {
@@ -316,8 +137,7 @@ test("bind_project and create_project register workspaces inside approved projec
 
     // Binding an existing manual workspace returns its real allow_write and source.
     const manualBind = await call("bind_project", {
-      project_path: manualProject,
-      confirmation: "BIND"
+      project_path: manualProject
     });
     assert.equal(manualBind.isError, false);
     assert.deepEqual(manualBind.body, {
@@ -329,8 +149,7 @@ test("bind_project and create_project register workspaces inside approved projec
 
     // Binding a new project creates a managed workspace and reuses its id.
     const firstBind = await call("bind_project", {
-      project_path: otherProject,
-      confirmation: "BIND"
+      project_path: otherProject
     });
     assert.equal(firstBind.isError, false);
     const firstBody = firstBind.body as { workspace_id?: unknown; root?: unknown; allow_write?: unknown; source?: unknown };
@@ -340,13 +159,12 @@ test("bind_project and create_project register workspaces inside approved projec
     assert.equal(firstBody.source, "managed");
 
     const secondBind = await call("bind_project", {
-      project_path: otherProject,
-      confirmation: "BIND"
+      project_path: otherProject
     });
     assert.deepEqual(secondBind.body, firstBind.body);
 
     // The managed workspace is immediately usable for task routing.
-    const run = await call("run_task", {
+    const run = await call("run_temp", {
       workspace_id: firstBody.workspace_id,
       instruction: "inspect",
       executor: "dsh"
@@ -357,8 +175,7 @@ test("bind_project and create_project register workspaces inside approved projec
     // create_project performs mkdir + git init and reports an unborn HEAD.
     const created = await call("create_project", {
       parent: approved,
-      name: "created-project",
-      confirmation: "CREATE"
+      name: "created-project"
     });
     assert.equal(created.isError, false);
     const createdBody = created.body as { workspace_id?: unknown; root?: unknown; allow_write?: unknown; git?: unknown };
@@ -368,11 +185,10 @@ test("bind_project and create_project register workspaces inside approved projec
     assert.deepEqual(createdBody.git, { initialized: true, head: "unborn" });
     assert.equal(readFileSync(join(approved, "created-project", ".git", "HEAD"), "utf8").includes("ref:"), true);
 
-    // Wrong or missing confirmation is rejected by the schema without side effects.
+    // Missing project name is rejected by the schema without side effects.
     const wrongConfirmation = await call("create_project", {
       parent: approved,
-      name: "rejected-project",
-      confirmation: "NO"
+      name: ""
     });
     assert.equal(wrongConfirmation.isError, true);
     assert.equal(JSON.stringify(wrongConfirmation.body).includes("workspace_id"), false);
@@ -380,8 +196,7 @@ test("bind_project and create_project register workspaces inside approved projec
     // Paths outside every approved root are rejected with a structured error.
     const outside = mkdtempSync(join(tmpdir(), "engineering-bridge-outside-"));
     const outsideBind = await call("bind_project", {
-      project_path: outside,
-      confirmation: "BIND"
+      project_path: outside
     });
     assert.equal(outsideBind.isError, true);
     assert.deepEqual(outsideBind.body, {
@@ -506,16 +321,14 @@ test("authorize_workspace_write persists for managed workspaces and rejects manu
     await client.connect(transport);
 
     const bound = await call("bind_project", {
-      project_path: managedProject,
-      confirmation: "BIND"
+      project_path: managedProject
     });
     const workspaceId = (bound.body as { workspace_id?: string }).workspace_id;
     assert.equal(typeof workspaceId, "string");
 
     // AUTHORIZE a managed workspace: persisted in the catalog file.
     const authorized = await call("authorize_workspace_write", {
-      workspace_id: workspaceId,
-      confirmation: "AUTHORIZE"
+      workspace_id: workspaceId
     });
     assert.equal(authorized.isError, false);
     assert.deepEqual(authorized.body, { workspace_id: workspaceId, allow_write: true });
@@ -525,15 +338,13 @@ test("authorize_workspace_write persists for managed workspaces and rejects manu
 
     // Idempotent on repeat.
     const again = await call("authorize_workspace_write", {
-      workspace_id: workspaceId,
-      confirmation: "AUTHORIZE"
+      workspace_id: workspaceId
     });
     assert.deepEqual(again.body, authorized.body);
 
     // Manual workspaces stay authoritative through workspaces.json.
     const manual = await call("authorize_workspace_write", {
-      workspace_id: "manual",
-      confirmation: "AUTHORIZE"
+      workspace_id: "manual"
     });
     assert.equal(manual.isError, true);
     assert.deepEqual(manual.body, {
@@ -545,8 +356,7 @@ test("authorize_workspace_write persists for managed workspaces and rejects manu
 
     // Unknown workspaces are unchanged.
     const missing = await call("authorize_workspace_write", {
-      workspace_id: "missing",
-      confirmation: "AUTHORIZE"
+      workspace_id: "missing"
     });
     assert.equal(missing.isError, true);
     assert.deepEqual(missing.body, {
@@ -556,10 +366,9 @@ test("authorize_workspace_write persists for managed workspaces and rejects manu
       }
     });
 
-    // Wrong confirmation is rejected by the schema.
+    // Missing workspace ID is rejected by the schema.
     const wrong = await call("authorize_workspace_write", {
-      workspace_id: workspaceId,
-      confirmation: "NO"
+      workspace_id: ""
     });
     assert.equal(wrong.isError, true);
     assert.equal(JSON.stringify(wrong.body).includes("allow_write"), false);
@@ -568,87 +377,7 @@ test("authorize_workspace_write persists for managed workspaces and rejects manu
   }
 });
 
-test("generate_controlled_patch and refine_controlled_patch accept omitted/codex/dsh executor and reject unknown values", async () => {
-  const configDir = mkdtempSync(join(tmpdir(), "engineering-bridge-patch-executor-"));
-  const configPath = join(configDir, "workspaces.json");
-  writeFileSync(configPath, "[]\n");
-  const client = new Client({ name: "test-client", version: "1.0.0" });
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [join(process.cwd(), "dist/src/mcp-stdio.js"), configPath],
-    cwd: process.cwd(),
-    stderr: "pipe"
-  });
 
-  const call = async (name: string, args: Record<string, unknown>): Promise<{ isError: boolean; body: unknown }> => {
-    const result = await client.callTool({ name, arguments: args });
-    const content = result.content as ToolResult["content"];
-    const text = content[0]?.text ?? "";
-    let body: unknown;
-    try {
-      body = JSON.parse(text) as unknown;
-    } catch {
-      body = { raw: text };
-    }
-    return { isError: result.isError === true, body };
-  };
-
-  try {
-    await client.connect(transport);
-
-    // Omitted, explicit codex, and explicit dsh all pass the schema; the
-    // business layer then fails on the missing workspace, proving the request
-    // reached the handler with the executor field accepted.
-    for (const args of [
-      { workspace_id: "missing", change_request: "change" },
-      { workspace_id: "missing", change_request: "change", executor: "codex" },
-      { workspace_id: "missing", change_request: "change", executor: "dsh" }
-    ]) {
-      const generated = await call("generate_controlled_patch", args);
-      assert.equal(generated.isError, true);
-      assert.deepEqual(generated.body, {
-        error: {
-          code: "UNKNOWN_WORKSPACE",
-          message: "The requested workspace is not registered."
-        }
-      });
-    }
-    for (const args of [
-      { patch_task_id: "missing", change_request: "refine" },
-      { patch_task_id: "missing", change_request: "refine", executor: "codex" },
-      { patch_task_id: "missing", change_request: "refine", executor: "dsh" }
-    ]) {
-      const refined = await call("refine_controlled_patch", args);
-      assert.equal(refined.isError, true);
-      assert.deepEqual(refined.body, {
-        error: {
-          code: "INVALID_STATE_TRANSITION",
-          message: "The requested state transition is not allowed."
-        }
-      });
-    }
-
-    // Unknown executor values are rejected by the schema before any business
-    // logic: the structured business error must not appear.
-    const unknownGenerate = await call("generate_controlled_patch", {
-      workspace_id: "missing",
-      change_request: "change",
-      executor: "unknown"
-    });
-    assert.equal(unknownGenerate.isError, true);
-    assert.equal(JSON.stringify(unknownGenerate.body).includes("UNKNOWN_WORKSPACE"), false);
-
-    const unknownRefine = await call("refine_controlled_patch", {
-      patch_task_id: "missing",
-      change_request: "refine",
-      executor: "unknown"
-    });
-    assert.equal(unknownRefine.isError, true);
-    assert.equal(JSON.stringify(unknownRefine.body).includes("INVALID_STATE_TRANSITION"), false);
-  } finally {
-    await client.close();
-  }
-});
 
 test("submit_controlled_patch registers a submitted proposal and task_result reports source submitted without an executor", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-submit-")));
@@ -739,8 +468,7 @@ index 90be1f3..3b18e51 100644
     // A submitted-but-not-applied proposal refuses exact COMMIT before APPLY.
     const earlyCommit = await call("commit_controlled_patch", {
       patch_task_id: taskId,
-      message: "feat: commit submitted patch",
-      confirmation: "COMMIT"
+      message: "feat: commit submitted patch"
     });
     assert.equal(earlyCommit.isError, true);
     assert.deepEqual(earlyCommit.body, {
@@ -749,20 +477,18 @@ index 90be1f3..3b18e51 100644
 
     // The submitted proposal is applied through the existing APPLY tool.
     const applied = await call("apply_controlled_patch", {
-      patch_task_id: taskId,
-      confirmation: "APPLY"
+      patch_task_id: taskId
     });
     assert.equal(applied.isError, false);
     assert.deepEqual(applied.body, { patch_task_id: taskId, applied: true, changed_paths: ["note.txt"] });
     assert.equal(readFileSync(join(root, "note.txt"), "utf8"), "after\n");
 
-    // Lowercase confirmation is rejected by the MCP input schema before any
+    // An empty commit message is rejected by the MCP input schema before any
     // business logic: the SDK validation prefix appears, no commit payload is
     // produced, and HEAD plus the applied tracked dirt stay untouched.
     const lowercased = await call("commit_controlled_patch", {
       patch_task_id: taskId,
-      message: "feat: commit submitted patch",
-      confirmation: "commit"
+      message: ""
     });
     assert.equal(lowercased.isError, true);
     assert.equal(typeof lowercased.body.raw, "string");
@@ -783,8 +509,7 @@ index 90be1f3..3b18e51 100644
     // Exact COMMIT creates one commit containing only the already-APPLYed proposal.
     const committed = await call("commit_controlled_patch", {
       patch_task_id: taskId,
-      message: "feat: commit submitted patch",
-      confirmation: "COMMIT"
+      message: "feat: commit submitted patch"
     });
     assert.equal(committed.isError, false);
     assert.equal(committed.body.patch_task_id, taskId);
@@ -804,7 +529,7 @@ index 90be1f3..3b18e51 100644
   }
 });
 
-test("controlled patch validation tools enforce fixed schemas, confirmation, defaults, and fixed validation input", async () => {
+test("controlled patch validation tools enforce fixed schemas, defaults, and fixed validation input", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-bridge-validation-mcp-")));
   execFileSync("git", ["init", "-q"], { cwd: root });
   execFileSync("git", ["config", "user.name", "Test User"], { cwd: root });
@@ -861,7 +586,7 @@ index 90be1f3..3b18e51 100644
       properties?: Record<string, { const?: unknown }>;
       additionalProperties?: boolean;
     } | undefined;
-    assert.equal(configureSchema?.properties?.confirmation?.const, "CONFIGURE");
+    assert.equal(configureSchema?.properties?.confirmation, undefined);
     assert.equal(configureSchema?.additionalProperties, false);
 
     const validationSchema = tools.get("validate_controlled_patch")?.inputSchema as {
@@ -899,31 +624,19 @@ index 90be1f3..3b18e51 100644
       assert.equal(JSON.stringify(rejected.body).includes("validation_profile_missing"), false);
     }
 
-    for (const confirmation of ["AUTHORIZE", "configure", undefined]) {
-      const rejected = await call("configure_validation_profile", {
-        workspace_id: "workspace",
-        profile,
-        ...(confirmation === undefined ? {} : { confirmation })
-      });
-      assert.equal(rejected.isError, true);
-      assert.equal(existsSync(profilePath), false);
-    }
-
     const emptyArgv = await call("configure_validation_profile", {
       workspace_id: "workspace",
       profile: {
         preparation: [],
         validation: [{ name: "test", argv: [] }]
-      },
-      confirmation: "CONFIGURE"
+      }
     });
     assert.equal(emptyArgv.isError, true);
     assert.equal(existsSync(profilePath), false);
 
     const configured = await call("configure_validation_profile", {
       workspace_id: "workspace",
-      profile,
-      confirmation: "CONFIGURE"
+      profile
     });
     assert.equal(configured.isError, false);
     assert.deepEqual(JSON.parse(readFileSync(profilePath, "utf8")), {
@@ -974,19 +687,18 @@ test("malformed validation profile state stays lazy for startup, listing, and an
     const listed = await client.listTools();
     assert.equal(listed.tools.some(({ name }) => name === "validate_controlled_patch"), true);
 
-    const run = await call("run_task", {
+    const run = await call("run_temp", {
       workspace_id: "missing",
       instruction: "inspect",
       executor: "dsh"
     });
-    assert.equal(run.isError, false);
-    assert.equal(typeof run.body.task_id, "string");
+    assert.equal(run.isError, true);
+    assert.match(JSON.stringify(run.body), /UNKNOWN_WORKSPACE/u);
     assert.equal(readFileSync(profilePath, "utf8"), "{not-json\n");
 
     const configuration = await call("configure_validation_profile", {
       workspace_id: "workspace",
-      profile: { preparation: [], validation: [] },
-      confirmation: "CONFIGURE"
+      profile: { preparation: [], validation: [] }
     });
     assert.equal(configuration.isError, true);
     assert.deepEqual(configuration.body, {

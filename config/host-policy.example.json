@@ -6,5 +6,6 @@
   "command_roots": [],
   "commands_enabled": false,
   "codex_homes": [],
-  "protected_paths": []
+  "protected_paths": [],
+  "follow_links": false
 }

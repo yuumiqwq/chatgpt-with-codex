@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
 import { resolveCommand } from "./command-resolution.js";
 
@@ -23,7 +26,18 @@ export function startCodexAppServer(cwd: string, host: Readonly<NodeJS.ProcessEn
     if (!/^[a-zA-Z0-9_-]+$/u.test(provider)) throw new Error("Invalid configured provider.");
     args.push("-c", "model_provider=" + JSON.stringify(provider));
   }
-  if (host.ENGINEERING_BRIDGE_CODEX_DISABLE_MCP === "1") args.push("-c", "mcp_servers={}");
+  if (host.ENGINEERING_BRIDGE_CODEX_DISABLE_MCP === "1") {
+    // An empty config table merges with existing entries instead of disabling
+    // them. Disable each configured server explicitly, including ourselves.
+    const names = new Set(["engineering-bridge"]);
+    try {
+      const config = readFileSync(join(host.CODEX_HOME ?? join(homedir(), ".codex"), "config.toml"), "utf8");
+      for (const match of config.matchAll(/^\s*\[mcp_servers\.([A-Za-z0-9_-]+|"[^"\r\n]+"|'[^'\r\n]+')\]/gmu)) {
+        names.add(match[1]!.replace(/^["']|["']$/gu, ""));
+      }
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    for (const name of names) args.push("-c", "mcp_servers." + name + ".enabled=false");
+  }
   const resolved = resolveCommand(host, "codex", {
     nodeTarget: ["@openai", "codex", "bin", "codex.js"], platform
   });

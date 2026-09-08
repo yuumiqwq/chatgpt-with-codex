@@ -12,6 +12,11 @@ export type ThreadListQuery = (home: string, params: Record<string, unknown>, si
 // Metadata only: no thread is resumed and no model turn starts.
 export function queryCodexThreadList(home: string, params: Record<string, unknown>, signal?: AbortSignal,
   start?: ProcessStarter, timeoutMs = 30_000, host: Readonly<NodeJS.ProcessEnv> = process.env): Promise<unknown> {
+  return queryCodexThread(home, "thread/list", params, signal, start, timeoutMs, host);
+}
+
+export function queryCodexThread(home: string, method: string, params: Record<string, unknown>, signal?: AbortSignal,
+  start?: ProcessStarter, timeoutMs = 30_000, host: Readonly<NodeJS.ProcessEnv> = process.env): Promise<unknown> {
   signal?.throwIfAborted();
   const child = startCodexAppServer(home, { ...host, CODEX_HOME: home,
     ENGINEERING_BRIDGE_CODEX_DISABLE_MCP: "1" }, process.platform, start);
@@ -51,7 +56,7 @@ export function queryCodexThreadList(home: string, params: Record<string, unknow
         if (stage === 1) {
           stage = 2;
           child.stdin.write(JSON.stringify({ method: "initialized", params: {} }) + "\n");
-          child.stdin.write(JSON.stringify({ id: 2, method: "thread/list", params }) + "\n");
+          child.stdin.write(JSON.stringify({ id: 2, method, params }) + "\n");
         } else { finish(undefined, message.result); return; }
       }
       if (buffer.length > 1_048_576) fail();
@@ -77,7 +82,7 @@ export async function listCodexThreads(policy: HostPolicy, options: {
   const wantedHome = options.codex_home ?? policy.config.codex_homes[0];
   const home = wantedHome && policy.config.codex_homes.find(candidate => relative(candidate, wantedHome) === "");
   if (!home) throw new HostError("CODEX_HOME_DENIED", "Select one of the configured Codex homes.");
-  await checkAncestors(home);
+  if (!policy.config.follow_links) await checkAncestors(home);
   const cwd = options.cwd === undefined ? undefined : await policy.check(normalizeCodexPath(options.cwd), "read");
   const limit = options.limit ?? 20;
   if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new HostError("CODEX_CATALOG_LIMIT", "The page limit must be between 1 and 50.");

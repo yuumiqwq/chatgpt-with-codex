@@ -448,7 +448,7 @@ export class RegisteredWorkspaceTaskService {
       // control_task can reach the existing interrupt/steer seam; the terminal
       // record below replaces it once the run settles.
       this.tasks.set(taskId, { state: "running", executor: request.executor, active: executor });
-      const result = await executor.execute({ taskId, instruction: request.instruction,
+      const result = await executor.execute({ taskId, instruction: request.instruction, ephemeral: true,
         ...(request.model !== undefined ? { model: request.model } : {}),
         ...(request.reasoning_effort !== undefined ? { reasoning_effort: request.reasoning_effort } : {}) });
       const taskResult: RegisteredWorkspaceTaskResult = result.kind === "completed"

@@ -38,7 +38,7 @@ function taskResultContent(view: ControlledTaskView | undefined) {
 
 export function registerTaskResultTools(
   server: McpServer,
-  service: RegisteredWorkspaceTaskService
+  service: Pick<RegisteredWorkspaceTaskService, "taskView" | "waitTask">
 ): void {
   server.registerTool("task_result", {
     description: "Retrieve the completed output or safe error for a task. This tool is read-only.",

@@ -6,6 +6,7 @@ import { z } from "zod";
 const PolicySchema = z.object({
   version: z.literal(1),
   enabled: z.boolean().default(false),
+  follow_links: z.boolean().default(false),
   read_roots: z.array(z.string().min(1)).default([]),
   write_roots: z.array(z.string().min(1)).default([]),
   command_roots: z.array(z.string().min(1)).default([]),
@@ -99,7 +100,7 @@ export class HostPolicy {
       const result: string[] = [];
       for (const root of roots) {
         const path = absolutePath(root);
-        await checkAncestors(path);
+        if (!config.follow_links) await checkAncestors(path);
         if (!(await lstat(path)).isDirectory()) throw new Error("Host policy roots must be existing directories.");
         result.push(await realpath(path));
       }
@@ -111,7 +112,7 @@ export class HostPolicy {
     ]);
     for (const home of config.codex_homes) {
       absolutePath(home);
-      await checkAncestors(home);
+      if (!config.follow_links) await checkAncestors(home);
       if (!(await lstat(home)).isDirectory()) throw new Error("Codex homes must exist.");
     }
     const protectedPaths = config.protected_paths.map(absolutePath);
@@ -134,7 +135,7 @@ export class HostPolicy {
     const path = absolutePath(pathValue);
     const roots = access === "read" ? this.canonicalReadRoots :
       access === "write" ? this.canonicalWriteRoots : this.canonicalCommandRoots;
-    await checkAncestors(path);
+    if (!this.config.follow_links) await checkAncestors(path);
     const canonical = await existingCanonicalPath(path);
     if (!roots.some(root => containsPath(root, canonical))) {
       throw new HostError("HOST_PATH_DENIED", "The path is outside the configured roots.");

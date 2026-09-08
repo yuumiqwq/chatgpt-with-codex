@@ -239,7 +239,7 @@ test("native resume passes the original UUID and home and still enforces read-on
   assert.equal(service.hasPendingTasks(), false);
 });
 
-test("MCP advertises enabled tools, enforces exact delete confirmation and audits no content", async t => {
+test("MCP advertises enabled tools, validates deletion content hashes and audits no content", async t => {
   const f = await fixture(t);
   const service = new RegisteredWorkspaceTaskService(new RegisteredWorkspaceRegistry([]), () => ({
     execute: async () => ({ kind: "completed", output: "ok" })
@@ -252,7 +252,7 @@ test("MCP advertises enabled tools, enforces exact delete confirmation and audit
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   const names = (await client.listTools()).tools.map(tool => tool.name);
-  assert.ok(names.includes("resume_codex_thread"));
+  assert.ok(!names.includes("resume_codex_thread"));
   assert.ok(names.includes("list_codex_threads"));
   assert.ok(names.includes("list_codex_projects"));
   assert.ok(names.includes("run_host_command"));
@@ -260,61 +260,12 @@ test("MCP advertises enabled tools, enforces exact delete confirmation and audit
   const content = "private-content-marker";
   assert.notEqual((await client.callTool({ name: "write_host_text_file", arguments: { path, content } })).isError, true);
   assert.equal((await client.callTool({ name: "delete_file", arguments: {
-    path, expected_sha256: digest(content), confirmation: "yes"
+    path, expected_sha256: digest("stale")
   } })).isError, true);
   assert.equal(await readFile(path, "utf8"), content);
   const audit = await readFile(f.policyPath + ".audit.jsonl", "utf8");
   assert.equal(audit.includes(content), false);
   assert.equal(audit.includes('"state":"completed"'), true);
-});
-
-test("native write resume requires an allowed cwd and preserves access through supervisor continuation", async t => {
-  const f = await fixture(t);
-  const sessions = join(f.codexHome, "sessions");
-  await mkdir(sessions);
-  const path = join(sessions, "rollout-" + THREAD_ID + ".jsonl");
-  const header = (cwd: string) => JSON.stringify({ type: "session_meta", payload: { id: THREAD_ID, cwd } }) + "\n";
-  await writeFile(path, header(f.readOnly));
-  const received: ExecutorRequest[] = [];
-  const service = new RegisteredWorkspaceTaskService(new RegisteredWorkspaceRegistry([]), () => ({
-    execute: async request => {
-      received.push(request);
-      return { kind: "completed", output: "done", threadId: THREAD_ID };
-    }
-  }));
-  const server = new McpServer({ name: "write-resume-test", version: "1" });
-  registerHostTools(server, f.policy, service);
-  const client = new Client({ name: "client", version: "1" });
-  const [ct, st] = InMemoryTransport.createLinkedPair();
-  t.after(async () => { await client.close(); await server.close(); });
-  await server.connect(st);
-  await client.connect(ct);
-  const args = { thread_id: THREAD_ID, instruction: "Continue the requested edit." };
-  const denied = await client.callTool({ name: "resume_codex_thread", arguments: args });
-  assert.equal(denied.isError, true);
-  assert.match(JSON.stringify(denied), /HOST_PATH_DENIED/u);
-  assert.equal(received.length, 0);
-  const read = await client.callTool({ name: "resume_codex_thread", arguments: { ...args, access: "read-only" } });
-  assert.notEqual(read.isError, true);
-  const readBody = JSON.parse((read.content as { text: string }[])[0]!.text);
-  assert.equal(readBody.access, "read-only");
-  await service.waitTask(readBody.task_id, 1);
-  assert.equal(received[0]!.sandbox, "read-only");
-  await service.controlTask(readBody.task_id, "accept");
-  await writeFile(path, header(f.allowed));
-  const write = await client.callTool({ name: "resume_codex_thread", arguments: args });
-  assert.notEqual(write.isError, true);
-  const writeBody = JSON.parse((write.content as { text: string }[])[0]!.text);
-  assert.equal(writeBody.access, "workspace-write");
-  const ready = await service.waitTask(writeBody.task_id, 1);
-  assert.equal(ready?.access, "workspace-write");
-  assert.equal(received[1]!.sandbox, "workspace-write");
-  await service.controlTask(writeBody.task_id, "continue", "Now test that edit.");
-  await service.waitTask(writeBody.task_id, 1);
-  assert.equal(received[2]!.sandbox, "workspace-write");
-  assert.equal(received[2]!.threadId, THREAD_ID);
-  assert.equal(received[2]!.instruction, "Now test that edit.");
-  await service.controlTask(writeBody.task_id, "accept");
 });
 
 test("native catalog forwards bounded search and pagination and omits disallowed conversation metadata", async t => {

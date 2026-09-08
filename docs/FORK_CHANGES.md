@@ -1,3 +1,11 @@
+## 1.6: reuse work and avoid temporary conversation accumulation
+
+Added unified work creation/adoption/reopening, same-UUID continuation, ephemeral execution and configurable retention. Durable state preserves summaries and results across restart; interrupted executions are reported honestly. Full-access work permits Git metadata writes and network operations without mandatory purpose classifications or literal confirmation tokens.
+
+Old controlled-patch data remains usable, while public generation/refinement moves to run_temp plus submit_controlled_patch. Junction-aware history lookup supports verified off-drive history placement. Explicit MCP entry disabling prevents recursive Bridge startup where an empty config table merges with inherited entries. See [work management](work-management.md) for current behavior.
+
+Below are earlier changes, with replaced APIs retained only as release history.
+
 # Local fork changes
 
 The fork provides cancellable `wait_task` long polling and an optional host

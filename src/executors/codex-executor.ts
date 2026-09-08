@@ -402,6 +402,7 @@ export class CodexExecutor implements Executor {
       }
       const sandbox = request.sandbox ?? "read-only";
       const threadParams: Record<string, unknown> = { cwd: this.workspaceRoot, approvalPolicy: "never", sandbox };
+      if (!request.threadId && request.ephemeral) threadParams.ephemeral = true;
       if (this.hostEnvironment.ENGINEERING_BRIDGE_CODEX_PROVIDER !== undefined) {
         threadParams.modelProvider = this.hostEnvironment.ENGINEERING_BRIDGE_CODEX_PROVIDER;
       }
@@ -416,7 +417,10 @@ export class CodexExecutor implements Executor {
       if (request.threadId && threadResult.thread.id !== request.threadId) throw new Error("Unexpected resumed thread.");
       this.threadId = threadResult.thread.id;
       request.onThreadId?.(this.threadId);
-      const sandboxPolicy = sandbox === "workspace-write"
+      if (request.threadName && !request.ephemeral) {
+        await this.call("thread/name/set", { threadId: this.threadId, name: request.threadName });
+      }
+      const sandboxPolicy = sandbox === "danger-full-access" ? { type: "dangerFullAccess" } : sandbox === "workspace-write"
         ? { type: "workspaceWrite", writableRoots: [this.workspaceRoot], networkAccess: false }
         : { type: "readOnly", networkAccess: false };
       const turnParams: Record<string, unknown> = {
