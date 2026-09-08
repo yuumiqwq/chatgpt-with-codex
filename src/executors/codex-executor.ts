@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { relative } from "node:path";
-import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { CoreError, serializeError } from "../core/errors.js";
 import { VERSION } from "../version.js";
-import { resolveCommand } from "./command-resolution.js";
+import { startCodexAppServer, type ProcessStarter } from "./codex-process.js";
+export type { ProcessStarter } from "./codex-process.js";
 import {
   DEFAULT_EXECUTOR_TIMING,
   signalExecution,
@@ -15,9 +16,6 @@ import {
   type ExecutorTiming
 } from "./executor.js";
 
-export type ProcessStarter = (executable: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
-const ENVIRONMENT_ALLOWLIST = ["PATH", "HOME", "CODEX_HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME",
-  "SystemRoot", "WINDIR", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"] as const;
 const MAX_EVIDENCE = 50;
 const MAX_TEXT = 16_384;
 const MAX_EVIDENCE_BYTES = 65_536;
@@ -25,10 +23,6 @@ const MAX_EVIDENCE_BYTES = 65_536;
 // Large agent messages may contain a complete patch; never truncate that patch.
 const MAX_JSONL_LINE_BYTES = 1_048_576;
 const DEFAULT_RPC_CALL_TIMEOUT_MS = 30_000;
-// Official npm target of the Codex CLI, derived from a codex.cmd shim's
-// location so a Windows npm install can be launched through Node directly
-// (never through a shell).
-const CODEX_NODE_TARGET = ["@openai", "codex", "bin", "codex.js"] as const;
 // Machine- and human-readable marker appended to any bounded evidence string
 // that was cut by MAX_TEXT, and the basis of the synthetic change/evidence
 // entries that make list and count truncation visible.
@@ -49,14 +43,6 @@ function failedTurn(turn: Record<string, unknown>): ExecutorResult {
     };
   }
   return failure("CODEX_EXECUTION_FAILED");
-}
-function environment(host: Readonly<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
-  const result: NodeJS.ProcessEnv = {};
-  for (const key of ENVIRONMENT_ALLOWLIST) if (host[key]) result[key] = host[key];
-  if (host.ENGINEERING_BRIDGE_CODEX_FORWARD_PROXY === "1") {
-    for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) if (host[key]) result[key] = host[key];
-  }
-  return result;
 }
 function object(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null; }
 function bounded(value: unknown): string {
@@ -103,35 +89,7 @@ export class CodexExecutor implements Executor {
     this.startedTurnId = undefined;
     let child: ChildProcessWithoutNullStreams;
     try {
-      const options: SpawnOptionsWithoutStdio = {
-        cwd: this.workspaceRoot, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
-        detached: this.platform !== "win32", env: environment(this.hostEnvironment)
-      };
-      // Windows: a directly spawnable codex.exe is preferred; an npm-installed
-      // codex.cmd shim is resolved to the official bin/codex.js Node target and
-      // launched through Node directly. Nothing here goes through a shell, and
-      // the user instruction travels over stdin, never through the command
-      // line. Everywhere else (and as the Windows fallback) the original bare
-      // "codex" spawn is unchanged.
-      const resolved = resolveCommand(this.hostEnvironment, "codex", {
-        nodeTarget: CODEX_NODE_TARGET, platform: this.platform
-      });
-      const provider = this.hostEnvironment.ENGINEERING_BRIDGE_CODEX_PROVIDER;
-      const serverArgs = ["app-server", "--stdio"];
-      if (provider !== undefined) {
-        if (!/^[a-zA-Z0-9_-]+$/u.test(provider)) throw new Error("Invalid configured provider.");
-        serverArgs.push("-c", "model_provider=" + JSON.stringify(provider));
-      }
-      if (this.hostEnvironment.ENGINEERING_BRIDGE_CODEX_DISABLE_MCP === "1") {
-        serverArgs.push("-c", "mcp_servers={}");
-      }
-      if (resolved.kind === "direct") {
-        child = this.startProcess(resolved.executable, serverArgs, options);
-      } else if (resolved.kind === "node-launcher") {
-        child = this.startProcess(process.execPath, [resolved.scriptPath, ...serverArgs], options);
-      } else {
-        child = this.startProcess("codex", serverArgs, options);
-      }
+      child = startCodexAppServer(this.workspaceRoot, this.hostEnvironment, this.platform, this.startProcess);
       this.child = child;
     } catch { return withDiagnostics(failure("CODEX_UNAVAILABLE")); }
 

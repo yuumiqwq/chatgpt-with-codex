@@ -3,7 +3,11 @@
 The fork provides cancellable `wait_task` long polling and an optional host
 interface. It supports binary file copies, reviewed text replacement,
 individual moves/deletes, validated workspace configuration reloads, and native
-Codex continuation with read-only turns. Host commands require a separate opt-in
+Codex continuation with selectable read-only or workspace-write turns. Native
+resume defaults to workspace-write only in an authorized original cwd; changes
+take effect during execution, not when the supervisor accepts the result.
+The metadata-only `list_codex_threads` catalog discovers titles, previews and
+native UUIDs with search, project filters and pagination. Host commands require a separate opt-in
 and run with OS account privileges; file roots are not a command sandbox.
 See [host operations](host-operations.md) for settings and limits.
 

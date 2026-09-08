@@ -925,6 +925,19 @@ test("native resume uses the requested thread and configured provider without ch
   assert.deepEqual(turn.params.sandboxPolicy, { type: "readOnly", networkAccess: false });
 });
 
+test("native write resume applies workspace-write to both the thread and the turn", async () => {
+  const invocations: Invocation[] = [];
+  const executor = timedExecutor(fakeStarter({ appServerOutput: "edited" }, invocations), "linux");
+  const result = await executor.execute({
+    taskId: TASK_ID, instruction: "edit and test", threadId: "thread-1", sandbox: "workspace-write"
+  });
+  assert.equal(result.kind, "completed");
+  const messages = invocations[0]!.stdin.trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(messages.find(message => message.method === "thread/resume").params.sandbox, "workspace-write");
+  assert.deepEqual(messages.find(message => message.method === "turn/start").params.sandboxPolicy,
+    { type: "workspaceWrite", writableRoots: [TRUSTED_CWD], networkAccess: false });
+});
+
 test("cross-home resume uses an explicitly verified rollout path and refuses a different returned UUID", async () => {
   const invocations: Invocation[] = [];
   const executor = new CodexExecutor(TRUSTED_CWD, fakeStarter({ appServerOutput: "continued" }, invocations), {

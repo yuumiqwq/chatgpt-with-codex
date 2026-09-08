@@ -3,6 +3,10 @@ import { join } from "node:path";
 
 import { absolutePath, checkAncestors, HostError, HostPolicy } from "./host-policy.js";
 
+export function normalizeCodexPath(value: string): string {
+  return absolutePath(process.platform === "win32" && /^\\\\\?\\[a-z]:\\/iu.test(value) ? value.slice(4) : value);
+}
+
 export async function locateCodexSession(policy: HostPolicy, threadId: string) {
   if (!policy.config.enabled) throw new HostError("HOST_DISABLED", "Host operations are not enabled.");
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(threadId)) {
@@ -46,10 +50,7 @@ export async function locateCodexSession(policy: HostPolicy, threadId: string) {
                 typeof metadata.payload.cwd !== "string") continue;
             // Codex may serialize a local Windows cwd with an extended prefix.
             // Only an ordinary drive path from validated local metadata is normalized.
-            const storedCwd = metadata.payload.cwd;
-            const cwdValue = process.platform === "win32" && /^\\\\\?\\[a-z]:\\/iu.test(storedCwd)
-              ? storedCwd.slice(4) : storedCwd;
-            const cwd = await policy.check(absolutePath(cwdValue), "read");
+            const cwd = await policy.check(normalizeCodexPath(metadata.payload.cwd), "read");
             if (!(await lstat(cwd)).isDirectory()) throw new HostError("CODEX_THREAD_CWD_MISSING", "The original thread directory is not available.");
             return { threadId: wanted, codexHome, cwd, rolloutPath: path };
           }

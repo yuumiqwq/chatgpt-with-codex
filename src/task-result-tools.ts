@@ -20,6 +20,7 @@ function taskResultContent(view: ControlledTaskView | undefined) {
     ...(view.source === undefined ? {} : { source: view.source }),
     ...(view.executor === undefined ? {} : { executor: view.executor }),
     ...(view.threadId === undefined ? {} : { thread_id: view.threadId }),
+    ...(view.access === undefined ? {} : { access: view.access }),
     ready: view.ready,
     ...(view.output === undefined ? {} : { output: view.output }),
     ...(view.review_output === undefined ? {} : { review_output: view.review_output }),

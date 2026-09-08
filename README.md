@@ -1,6 +1,6 @@
 # Engineering Bridge
 
-本地分支增加了等待任务、文件操作和原生会话续接，可选的主机能力通过独立配置启用。配置方式与权限说明见 [Host operations](docs/host-operations.md)，上游版本信息保留如下。
+本地分支增加了等待任务、文件操作、本地会话查询和原生会话续接。续接默认允许 Codex 在原项目目录直接修改文件，也可选择只读分析；可选主机能力通过独立配置启用。配置方式与权限说明见 [Host operations](docs/host-operations.md)，上游版本信息保留如下。
 
 **打通 Chat 与本地 Codex 与 Deepseek harness：不再搬提示词，Chat 直接调度、监督并验收 Codex 与 Deepseek harness。**
 

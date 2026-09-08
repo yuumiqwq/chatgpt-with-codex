@@ -5,7 +5,7 @@ import { serializeError } from "../core/errors.js";
 import type { Id } from "../core/ids.js";
 import type { SerializedError } from "../core/errors.js";
 import { CoreError } from "../core/errors.js";
-import type { Executor, ExecutorDiagnostics, ExecutorEvidence } from "../executors/executor.js";
+import type { Executor, ExecutorDiagnostics, ExecutorEvidence, SandboxMode } from "../executors/executor.js";
 import { RegisteredWorkspaceRegistry } from "../workspaces/registered-workspace-registry.js";
 
 export type ExecutorName = "codex" | "dsh";
@@ -61,6 +61,7 @@ export type ControlledTaskDiagnostics =
     readonly executor_ended_at?: never;
   };
 export interface ControlledTaskView {
+  readonly access?: SandboxMode;
   readonly taskId: Id;
   readonly state: ControlledTaskState;
   // The executor selection is fixed for the whole task lifetime. It is always
@@ -96,7 +97,7 @@ type InteractiveRecord = {
   state: ControlledTaskState; request: NormalizedRegisteredWorkspaceTaskRequest; evidence: readonly ExecutorEvidence[];
   executor?: Executor | undefined; threadId?: string | undefined; output?: string | undefined;
   partialOutput?: string | undefined; diagnostics?: ExecutorDiagnostics | undefined; error?: SerializedError | undefined;
-  executionRoot?: string; codexHome?: string; rolloutPath?: string;
+  executionRoot?: string; codexHome?: string; rolloutPath?: string; sandbox?: SandboxMode;
 };
 
 const MAX_TERMINAL_TASK_HISTORY = 100;
@@ -230,10 +231,10 @@ export class RegisteredWorkspaceTaskService {
   }
 
   // Called only after host policy validates an existing local session and cwd.
-  // It resumes through the native executor, with the same read-only turn policy.
+  // The caller validates write authorization before requesting workspace-write.
   resumeCodexThread(request: {
     threadId: string; cwd: string; codexHome: string; instruction: string;
-    model?: string; reasoning_effort?: string; rolloutPath?: string;
+    model?: string; reasoning_effort?: string; rolloutPath?: string; access?: SandboxMode;
   }): { taskId: Id } {
     for (const record of this.interactive.values()) {
       if (record.threadId === request.threadId &&
@@ -245,6 +246,7 @@ export class RegisteredWorkspaceTaskService {
     this.interactive.set(taskId, {
       state: "queued", evidence: [], threadId: request.threadId,
       executionRoot: request.cwd, codexHome: request.codexHome,
+      sandbox: request.access ?? "read-only",
       ...(request.rolloutPath === undefined ? {} : { rolloutPath: request.rolloutPath }),
       request: {
         workspace_id: "native-session", executor: "codex", instruction: request.instruction,
@@ -286,6 +288,7 @@ export class RegisteredWorkspaceTaskService {
       state: record.state,
       executor: record.request.executor,
       evidence: record.evidence,
+      ...(record.sandbox === undefined ? {} : { access: record.sandbox }),
       ...(record.threadId === undefined ? {} : { threadId: record.threadId }),
       ...(record.diagnostics === undefined ? {} : { diagnostics: record.diagnostics })
     };
@@ -397,7 +400,7 @@ export class RegisteredWorkspaceTaskService {
       const executor = this.executorFactory(record.request.executor, root, record.codexHome);
       record.executor = executor;
       const result = await executor.execute({ taskId, instruction: record.request.instruction,
-        sandbox: "read-only",
+        sandbox: record.sandbox ?? "read-only",
         ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
         ...(record.rolloutPath === undefined ? {} : { threadPath: record.rolloutPath }),
         ...(record.codexHome === undefined ? {} : { threadHome: record.codexHome }),

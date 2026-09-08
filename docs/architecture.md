@@ -2,6 +2,12 @@
 
 This document describes the Engineering Bridge V1 (1.4.2) behavior.
 
+The local fork extends this baseline with optional host operations and native
+session discovery/resume; see [host operations](host-operations.md) for the current
+interface. In v1.5.0-local.2, native resume can run workspace-write turns, and
+supervisor continuation preserves that access. The ordinary read-only task flow
+described below remains unchanged.
+
 Engineering Bridge is a local STDIO MCP server with thirteen tools and a small layered structure:
 
 1. `src/mcp-stdio.ts` loads trusted workspace configuration (manual entries plus `project_root` approved roots), loads the managed-workspace catalog, registers all thirteen tools (`run_task`, `task_result`, `control_task`, `bind_project`, `create_project`, `authorize_workspace_write`, `generate_controlled_patch`, `refine_controlled_patch`, `submit_controlled_patch`, `apply_controlled_patch`, `commit_controlled_patch`, `configure_validation_profile`, `validate_controlled_patch`), and connects the MCP STDIO transport.

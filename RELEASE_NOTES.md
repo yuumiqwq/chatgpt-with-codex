@@ -1,5 +1,14 @@
 # Release notes
 
+## v1.5.0-local.2
+
+Discover local Codex conversations by title or project without manually supplying
+UUIDs. The native metadata-only catalog supports bounded previews, pagination and
+archived histories. Native resume now defaults to workspace-write within the
+original authorized cwd, with an explicit read-only option; continued turns keep
+the selected access. Writes happen during execution, before supervisor acceptance.
+Ordinary run_task and controlled-patch generation remain read-only.
+
 ## v1.5.0-local.1
 
 Local fork release: cancellable task waiting, optional administrator-configured

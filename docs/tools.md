@@ -36,7 +36,7 @@ Inputs: `task_id`, `action`, and optional `instruction`.
 
 The actions are state-specific:
 
-- `continue`: while `waiting_for_supervisor_review`, requires a non-empty instruction, queues another read-only turn, and preserves app-server thread continuity with `thread/resume` for Codex. For DSH, `continue` starts a new headless execution; there is no native resume.
+- `continue`: while `waiting_for_supervisor_review`, requires a non-empty instruction and preserves the original task access and app-server thread continuity with `thread/resume` for Codex. Ordinary `run_task` stays read-only; native resumed tasks can retain workspace-write. For DSH, `continue` starts a new headless execution; there is no native resume.
 - `steer`: while `running`, requires a non-empty instruction and steers the active turn (Codex only).
 - `interrupt`: while `running`, interrupts the active turn. When interruption completes, the task ends as `failed`; genuine partial output may be exposed as `partial_output`.
 - `accept`: while `waiting_for_supervisor_review`, marks the reviewed output `completed` without starting another turn.
