@@ -1,6 +1,6 @@
 # Current MCP tools
 
-Version 1.6 replaces one-conversation-per-call execution with durable work and native ephemeral turns. See [work management](work-management.md) for lifecycle, default full access and retention semantics.
+Version 1.7 replaces one-conversation-per-call execution with durable work and native ephemeral turns. See [work management](work-management.md) for lifecycle, default full access and retention semantics.
 
 | Tool | Inputs / purpose |
 | --- | --- |
@@ -17,12 +17,6 @@ Version 1.6 replaces one-conversation-per-call execution with durable work and n
 | list_workspaces | Optional query; discover registered project roots and IDs. |
 | bind_project | project_path; register an existing project. |
 | create_project | parent + name; create an empty Git project and register it. |
-| authorize_workspace_write | workspace_id; enable the optional controlled-patch writer for managed workspaces. |
-| submit_controlled_patch | workspace_id + base_head + diff; retain a complete unified diff. |
-| apply_controlled_patch | patch_task_id; apply a retained patch. Does not stage/commit/push. |
-| commit_controlled_patch | patch_task_id + message; commit the already-applied patch. Does not push. |
-| configure_validation_profile | workspace_id + profile; persist preparation/validation steps. |
-| validate_controlled_patch | patch_task_id; validate using the configured profile. |
 | host_capabilities | Current host settings and execution limits. |
 | list_codex_projects | Optional query/home/cursor/scan_limit/archived; project groups from a bounded history page. |
 | list_codex_threads | Optional query/cwd/home/cursor/limit/archived; native IDs and titles. |
@@ -35,8 +29,10 @@ Version 1.6 replaces one-conversation-per-call execution with durable work and n
 | run_host_command | absolute executable + args + cwd; timeout_seconds 1–45. |
 | reload_workspace_config | Validate/reload when no executions are pending. |
 
-There are 30 tools with optional host operations enabled, 20 without them. Host files retain their configured roots and content hash checks; enabled host commands and full-access Codex executions use OS account privileges. No public tool requires a literal confirmation token.
+There are 24 tools with optional host operations enabled, 14 without them. Host files retain their configured roots and content hash checks; enabled host commands and full-access Codex executions use OS account privileges. No public tool requires a literal confirmation token.
 
-Removed tools: run_task, resume_codex_thread, generate_controlled_patch and refine_controlled_patch. Old controlled-patch proposal records remain readable. Their optional internal engine still checks Git base state, patch consistency and configured controlled-write permission. Direct full-access work can edit, test and run Git itself.
+Removed execution APIs: run_task, resume_codex_thread, generate_controlled_patch and refine_controlled_patch. Version 1.7 also removes authorize_workspace_write, submit_controlled_patch, apply_controlled_patch, commit_controlled_patch, configure_validation_profile, validate_controlled_patch. The old patch and validation engines are deleted; their private sidecar files remain ordinary historical data, not executable records. All changes and Git operations use continue_work or run_temp.
+
+Access accepts read-only or danger-full-access, with full access the default. Existing work records with workspace-write are normalized to full access on load; old result records retain the access that was actually used.
 
 New successful executions return state completed, ready true and output. Failures expose structured errors; interrupted runs may expose genuine partial_output. Persistent runs carry thread_id; temporary and DSH runs do not. Executors retain the 15-minute deadline; Codex has a two-minute active-turn inactivity watchdog and 30-second RPC deadlines. Timeout of wait_task leaves execution running, so callers continue waiting when ready is false.

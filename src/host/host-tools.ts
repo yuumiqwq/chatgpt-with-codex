@@ -3,8 +3,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CoreError, serializeError } from "../core/errors.js";
 
-import type { RegisteredWorkspaceTaskService } from "../tasks/registered-workspace-task-service.js";
-import { locateCodexSession } from "./codex-sessions.js";
 import { listCodexProjects, listCodexThreads, type ThreadListQuery } from "./codex-thread-list.js";
 import { runHostCommand } from "./host-command.js";
 import { HostFiles } from "./host-files.js";
@@ -32,7 +30,6 @@ class HostAudit {
 export function registerHostTools(
   server: McpServer,
   policy: HostPolicy,
-  service: RegisteredWorkspaceTaskService,
   options: {
     validateText?: (path: string, content: string) => void;
     reloadWorkspaces?: () => Promise<unknown>;
@@ -69,7 +66,7 @@ export function registerHostTools(
     ...policy.config, policy_file: policy.policyPath,
     file_limit_mib: 512, text_write_limit_mib: 2, command_output_limit_bytes: 65_536,
     command_max_seconds: 45, gui_control: false,
-    work_execution: { default: "danger-full-access", options: ["read-only", "workspace-write", "danger-full-access"], write_scope: "full access uses OS account privileges; workspace-write limits file writes and Git metadata" },
+    work_execution: { default: "danger-full-access", options: ["read-only", "danger-full-access"], write_scope: "full access uses OS account privileges; read-only prevents model file writes" },
     policy_changes: "local administrator plus runtime restart",
     commands_are_os_sandboxed: false
   }));
@@ -153,7 +150,7 @@ export function registerHostTools(
 
   if (options.reloadWorkspaces) {
     server.registerTool("reload_workspace_config", {
-      description: "Validate and reload the current workspace configuration after an authorized edit. Requires no active or pending-review tasks. The host policy is separate and remains administrator-only.",
+      description: "Validate and reload the current workspace configuration after an authorized edit. Requires no queued or running executions. The host policy is separate and remains administrator-only.",
       inputSchema: {}, annotations: mutation
     }, () => safe("reload_workspaces", {}, options.reloadWorkspaces!));
   }

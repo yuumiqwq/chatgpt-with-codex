@@ -15,7 +15,6 @@ import { runHostCommand } from "../../../src/host/host-command.js";
 import { HostFiles } from "../../../src/host/host-files.js";
 import { containsPath, HostError, HostPolicy } from "../../../src/host/host-policy.js";
 import { registerHostTools } from "../../../src/host/host-tools.js";
-import { RegisteredWorkspaceTaskService } from "../../../src/tasks/registered-workspace-task-service.js";
 import { RegisteredWorkspaceRegistry } from "../../../src/workspaces/registered-workspace-registry.js";
 
 const THREAD_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -212,40 +211,12 @@ test("native session lookup verifies the header UUID and original allowed cwd", 
   await assert.rejects(locateCodexSession(f.policy, "invalid"), hostCode("CODEX_THREAD_NOT_FOUND"));
 });
 
-test("native resume passes the original UUID and home and still enforces read-only execution", async t => {
-  const f = await fixture(t);
-  let received: ExecutorRequest | undefined;
-  let complete!: (value: { kind: "completed"; output: string; threadId: string }) => void;
-  const service = new RegisteredWorkspaceTaskService(new RegisteredWorkspaceRegistry([]), (executor, cwd, home) => {
-    assert.equal(executor, "codex");
-    assert.equal(cwd, f.allowed);
-    assert.equal(home, f.codexHome);
-    return { execute: async request => {
-      received = request;
-      return new Promise(resolveResult => { complete = resolveResult; });
-    } };
-  });
-  const request = { threadId: THREAD_ID, cwd: f.allowed, codexHome: f.codexHome, instruction: "Continue reading." };
-  const { taskId } = service.resumeCodexThread(request);
-  assert.throws(() => service.resumeCodexThread(request));
-  await Promise.resolve();
-  assert.equal(received?.threadId, THREAD_ID);
-  assert.equal(received?.sandbox, "read-only");
-  assert.equal(service.hasPendingTasks(), true);
-  complete({ kind: "completed", output: "continued", threadId: THREAD_ID });
-  assert.equal((await service.waitTask(taskId, 1))?.review_output, "continued");
-  assert.throws(() => service.resumeCodexThread(request), { code: "CODEX_THREAD_BUSY" });
-  await service.controlTask(taskId, "accept");
-  assert.equal(service.hasPendingTasks(), false);
-});
+
 
 test("MCP advertises enabled tools, validates deletion content hashes and audits no content", async t => {
   const f = await fixture(t);
-  const service = new RegisteredWorkspaceTaskService(new RegisteredWorkspaceRegistry([]), () => ({
-    execute: async () => ({ kind: "completed", output: "ok" })
-  }));
   const server = new McpServer({ name: "host-test", version: "1" });
-  registerHostTools(server, f.policy, service);
+  registerHostTools(server, f.policy);
   const client = new Client({ name: "client", version: "1" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   t.after(async () => { await client.close(); await server.close(); });

@@ -1,10 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-
-import type {
-  ControlledTaskView,
-  RegisteredWorkspaceTaskService
-} from "./tasks/registered-workspace-task-service.js";
+import type { TaskView } from "./tasks/execution-types.js";
+import type { WorkService } from "./tasks/work-service.js";
 
 function jsonContent(value: unknown) {
   return {
@@ -12,18 +9,16 @@ function jsonContent(value: unknown) {
   };
 }
 
-function taskResultContent(view: ControlledTaskView | undefined) {
+function taskResultContent(view: TaskView | undefined) {
   if (view === undefined) {
     return { isError: true, ...jsonContent({ error: "UNKNOWN_TASK" }) };
   }
   const taskView = { task_id: view.taskId, state: view.state,
-    ...(view.source === undefined ? {} : { source: view.source }),
     ...(view.executor === undefined ? {} : { executor: view.executor }),
     ...(view.threadId === undefined ? {} : { thread_id: view.threadId }),
     ...(view.access === undefined ? {} : { access: view.access }),
     ready: view.ready,
     ...(view.output === undefined ? {} : { output: view.output }),
-    ...(view.review_output === undefined ? {} : { review_output: view.review_output }),
     ...(view.partial_output === undefined ? {} : { partial_output: view.partial_output }),
     evidence: view.evidence,
     ...(view.diagnostics === undefined ? {} : { diagnostics: view.diagnostics }),
@@ -38,7 +33,7 @@ function taskResultContent(view: ControlledTaskView | undefined) {
 
 export function registerTaskResultTools(
   server: McpServer,
-  service: Pick<RegisteredWorkspaceTaskService, "taskView" | "waitTask">
+  service: Pick<WorkService, "taskView" | "waitTask">
 ): void {
   server.registerTool("task_result", {
     description: "Retrieve the completed output or safe error for a task. This tool is read-only.",
@@ -46,7 +41,7 @@ export function registerTaskResultTools(
   }, ({ task_id }) => taskResultContent(service.taskView(task_id)));
 
   server.registerTool("wait_task", {
-    description: "Wait until a task is ready, including supervisor review, or the timeout expires. Returns the current task view without interrupting the task. This tool is read-only.",
+    description: "Wait until a task is ready, or the timeout expires. Returns the current task view without interrupting the task. This tool is read-only.",
     inputSchema: {
       task_id: z.string(),
       timeout_seconds: z.number().min(1).max(45).optional().default(25)

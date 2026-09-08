@@ -388,7 +388,7 @@ test("maps nonzero exit to an execution failure without exposing output or stder
 test("does not impose a sandbox policy before starting DSH", async () => {
   const invocations: Invocation[] = [];
   const result = await new DshExecutor(TRUSTED_CWD, fakeStarter({}, invocations), {})
-    .execute({ taskId: TASK_ID, instruction: "inspect", sandbox: "workspace-write" });
+    .execute({ taskId: TASK_ID, instruction: "inspect", sandbox: "danger-full-access" });
 
   assert.deepEqual(result, { kind: "completed", output: "final answer" });
   assert.equal(invocations.length, 1);

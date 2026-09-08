@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { WorkService } from "../../src/tasks/work-service.js";
 import { RegisteredWorkspaceRegistry } from "../../src/workspaces/registered-workspace-registry.js";
 import { HostPolicy } from "../../src/host/host-policy.js";
-import type { ExecutorFactory } from "../../src/tasks/registered-workspace-task-service.js";
+import type { ExecutorFactory } from "../../src/tasks/execution-types.js";
 import type { ExecutorRequest, ExecutorResult } from "../../src/executors/executor.js";
 
 async function fixture(t: { after(fn: () => void): void }, execute?: (r: ExecutorRequest) => Promise<ExecutorResult>) {
@@ -212,4 +212,18 @@ test("concurrent archived history adoption keeps one work record", async t => {
   const [a, b] = await Promise.all([service.open({ thread_id: threadId }), service.open({ thread_id: threadId })]);
   assert.equal(a.work_id, b.work_id);
   assert.equal(service.list().total, 1);
+});
+
+test("legacy workspace-write setting resumes with full access while old runs remain historical", async t => {
+  const f = await fixture(t);
+  const work = await f.service.open({ workspace_id: "project" });
+  const data = JSON.parse(readFileSync(f.path, "utf8"));
+  data.works[0].access = "workspace-write";
+  writeFileSync(f.path, JSON.stringify(data));
+  const restored = f.create(); restored.load();
+  assert.equal(restored.list().works[0]?.access, "danger-full-access");
+  const run = await restored.continue(work.work_id, { instruction: "finish" });
+  await restored.waitTask(run.task_id);
+  assert.equal(f.requests[0]?.sandbox, "danger-full-access");
+  assert.equal(JSON.parse(readFileSync(f.path, "utf8")).works[0].access, "danger-full-access");
 });

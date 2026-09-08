@@ -6,7 +6,7 @@ import { z } from "zod";
 import { newId } from "../core/ids.js";
 import { serializeError, CoreError } from "../core/errors.js";
 import type { Executor, SandboxMode } from "../executors/executor.js";
-import type { ControlledTaskView, ExecutorFactory, ExecutorName } from "./registered-workspace-task-service.js";
+import type { TaskView, ExecutorFactory, ExecutorName } from "./execution-types.js";
 import { RegisteredWorkspaceRegistry } from "../workspaces/registered-workspace-registry.js";
 import { HostError, HostPolicy } from "../host/host-policy.js";
 import { locateCodexSession } from "../host/codex-sessions.js";
@@ -17,7 +17,8 @@ const WorkSchema = z.object({
   codex_home: z.string(), thread_id: z.string().uuid().optional(), archived: z.boolean().default(false),
   previous_threads: z.array(z.string()).default([]),
   status: z.enum(["active", "completed"]).default("active"),
-  access: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("danger-full-access"),
+  access: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("danger-full-access")
+    .transform(value => value === "workspace-write" ? "danger-full-access" as const : value),
   created_at: z.string(), updated_at: z.string(), summary: z.string().default(""),
   references: z.array(z.string()).default([]), last_task_id: z.string().optional()
 });
@@ -42,7 +43,7 @@ const StoreSchema = z.object({
 });
 type NativeCall = (home: string, method: string, params: Record<string, unknown>) => Promise<unknown>;
 type SessionLocator = typeof locateCodexSession;
-type TurnOptions = { instruction: string; model?: string | undefined; reasoning_effort?: string | undefined; access?: SandboxMode | undefined };
+type TurnOptions = { instruction: string; model?: string | undefined; reasoning_effort?: string | undefined; access?: Exclude<SandboxMode, "workspace-write"> | undefined };
 const now = () => new Date().toISOString();
 function problem(code: string, message: string): never { throw new HostError(code, message); }
 
@@ -53,7 +54,7 @@ function problem(code: string, message: string): never { throw new HostError(cod
 export class WorkService {
   private works = new Map<string, Work>();
   private runs = new Map<string, Run>();
-  private live = new Map<string, { executor: Executor; evidence?: ControlledTaskView["evidence"] }>();
+  private live = new Map<string, { executor: Executor; evidence?: TaskView["evidence"] }>();
   private preparing = new Set<string>();
   private retention = RetentionSchema.parse({});
   private savedWorks = new Map<string, string>();
@@ -165,7 +166,7 @@ export class WorkService {
   }
 
   async open(options: { work_id?: string | undefined; thread_id?: string | undefined; name?: string | undefined;
-    workspace_id?: string | undefined; cwd?: string | undefined; access?: SandboxMode | undefined }) {
+    workspace_id?: string | undefined; cwd?: string | undefined; access?: Exclude<SandboxMode, "workspace-write"> | undefined }) {
     this.refresh();
     let work = options.work_id ? this.require(options.work_id) : undefined;
     if (work && options.thread_id && work.thread_id !== options.thread_id) {
@@ -248,7 +249,7 @@ export class WorkService {
       result_file: join(this.resultDirectory, run.task_id + ".json") };
   }
 
-  private start(cwd: string, home: string, options: TurnOptions, access: SandboxMode,
+  private start(cwd: string, home: string, options: TurnOptions, access: Exclude<SandboxMode, "workspace-write">,
     executor: ExecutorName, ephemeral: boolean, work?: Work, rolloutPath?: string) {
     const timestamp = now();
     const run: Run = { task_id: newId(), ...(work ? { work_id: work.work_id } : {}),
@@ -263,17 +264,17 @@ export class WorkService {
   }
 
   private async execute(run: Run, cwd: string, home: string, options: TurnOptions, work?: Work, rolloutPath?: string) {
-    let view: ControlledTaskView;
+    let view: TaskView;
     try {
       run.state = "running"; this.save();
       const executor = this.factory(run.executor, cwd, home || undefined);
-      const live: { executor: Executor; evidence?: ControlledTaskView["evidence"] } = { executor };
+      const live: { executor: Executor; evidence?: TaskView["evidence"] } = { executor };
       this.live.set(run.task_id, live);
       const result = await executor.execute({ taskId: run.task_id as ReturnType<typeof newId>,
         instruction: options.instruction + (!run.ephemeral && work?.previous_threads.length && !work.thread_id
           ? "\nRetained work summary (earlier native history was deleted):\n" + work.summary +
             "\nReferences:\n" + work.references.join("\n") : ""),
-        sandbox: run.access, ephemeral: run.ephemeral,
+        sandbox: run.access === "workspace-write" ? "danger-full-access" : run.access, ephemeral: run.ephemeral,
         ...(!run.ephemeral && work?.thread_id ? { threadId: work.thread_id } : {}),
         ...(!run.ephemeral && work ? { threadName: work.name } : {}),
         ...(rolloutPath ? { threadPath: rolloutPath, threadHome: home } : {}),
@@ -294,7 +295,7 @@ export class WorkService {
       view = { taskId: run.task_id as ReturnType<typeof newId>, state: run.state, ready: true,
         access: run.access, executor: run.executor,
         ...(!run.ephemeral && run.thread_id ? { threadId: run.thread_id } : {}),
-        ...(result.kind === "completed" ? { output: result.output } : { error: run.error as ControlledTaskView["error"] }),
+        ...(result.kind === "completed" ? { output: result.output } : { error: run.error as TaskView["error"] }),
         ...(result.kind === "interrupted" ? { partial_output: result.output } : {}),
         ...(result.evidence ? { evidence: result.evidence } : {}),
         ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}) };
@@ -302,7 +303,7 @@ export class WorkService {
       run.state = "failed";
       run.error = error instanceof HostError ? { code: error.code, message: error.message } : serializeError(error);
       view = { taskId: run.task_id as ReturnType<typeof newId>, state: "failed", ready: true,
-        error: run.error as ControlledTaskView["error"] };
+        error: run.error as TaskView["error"] };
     } finally { this.live.delete(run.task_id); }
     run.updated_at = now();
     if (work) work.updated_at = run.updated_at;
@@ -311,7 +312,7 @@ export class WorkService {
     this.pruneResults(); this.save();
   }
 
-  taskView(taskId: unknown): ControlledTaskView | undefined {
+  taskView(taskId: unknown): TaskView | undefined {
     this.refresh();
     if (typeof taskId !== "string") return undefined;
     const run = this.runs.get(taskId);
@@ -323,7 +324,7 @@ export class WorkService {
     return { taskId: taskId as ReturnType<typeof newId>, state: run.state,
       executor: run.executor, access: run.access, ready: run.state === "completed" || run.state === "failed",
       ...(run.thread_id ? { threadId: run.thread_id } : {}),
-      ...(run.error ? { error: run.error as ControlledTaskView["error"] } : {}),
+      ...(run.error ? { error: run.error as TaskView["error"] } : {}),
       ...(this.live.get(taskId)?.evidence ? { evidence: this.live.get(taskId)!.evidence! } : {}) };
   }
   async waitTask(id: unknown, timeout = 25, signal?: AbortSignal) {

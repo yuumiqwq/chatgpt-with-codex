@@ -420,8 +420,7 @@ export class CodexExecutor implements Executor {
       if (request.threadName && !request.ephemeral) {
         await this.call("thread/name/set", { threadId: this.threadId, name: request.threadName });
       }
-      const sandboxPolicy = sandbox === "danger-full-access" ? { type: "dangerFullAccess" } : sandbox === "workspace-write"
-        ? { type: "workspaceWrite", writableRoots: [this.workspaceRoot], networkAccess: false }
+      const sandboxPolicy = sandbox === "danger-full-access" ? { type: "dangerFullAccess" }
         : { type: "readOnly", networkAccess: false };
       const turnParams: Record<string, unknown> = {
         threadId: this.threadId, input: [{ type: "text", text: request.instruction }],

@@ -1,7 +1,7 @@
 {
   "name": "engineering-bridge",
-  "version": "1.6.0-local.1",
-  "description": "A local MCP bridge for durable Codex work, ephemeral execution, host operations and optional controlled patches.",
+  "version": "1.7.0-local.1",
+  "description": "A local MCP bridge for durable Codex work, ephemeral execution, host operations.",
   "type": "module",
   "files": [
     "dist/src/**",
@@ -33,7 +33,7 @@
     "codex",
     "local-first",
     "read-only",
-    "controlled-patch"
+    "ephemeral"
   ],
   "license": "MIT",
   "devDependencies": {

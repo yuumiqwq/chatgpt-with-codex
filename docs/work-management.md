@@ -1,6 +1,6 @@
 # Durable work and temporary execution
 
-This fork's current interface is version 1.6. The model chooses the work, declares completion and selects retention operations. Bridge records those decisions and executes them; it does not classify natural-language goals or impose permanent “formal/auxiliary” categories.
+This fork's current interface is version 1.7. The model chooses the work, declares completion and selects retention operations. Bridge records those decisions and executes them; it does not classify natural-language goals or impose permanent “formal/auxiliary” categories.
 
 ## Choosing a work
 
@@ -14,7 +14,7 @@ Use `list_work` to find an existing work by project, name or summary. Project na
 
 `continue_work` starts a turn. The first execution creates and names a native thread. Later executions reuse its UUID and original history. Each execution gets a separate Bridge `task_id` for waiting and results. Existing archived history is unarchived when reopened.
 
-Default access is `danger-full-access`, with no additional Codex approval prompt. It permits filesystem, Git-metadata and network operations using the current OS account. The caller can select `workspace-write` or `read-only` for an individual work/turn. Workspace-write can protect Git metadata and disables network; it should not be selected for a requested autonomous commit/push workflow. Stopping an execution does not roll back its edits. DSH remains a read-only, one-shot headless executor.
+Default access is `danger-full-access`, with no additional Codex approval prompt. It permits filesystem, Git-metadata and network operations using the current OS account. The caller can select `read-only` for an individual work/turn that must not edit files; that mode disables network. There is no workspace-write input option. Existing work records using it normalize to full access; historical results retain their original reported access. Stopping an execution does not roll back its edits. DSH remains a read-only, one-shot headless executor.
 
 Bridge checks concurrent execution only within its own process. Reading a conversation in another client is compatible with this flow, but simultaneous execution by another Codex client is not reliably detected.
 
@@ -26,15 +26,15 @@ Codex uses `thread/start` with `ephemeral: true` inside the existing app-server 
 
 Temporary execution has no resumable UUID. Use `continue_work` for ongoing context. A DSH invocation does not produce a fabricated Codex UUID; DSH's own local runtime data is outside native Codex history retention.
 
-For optional controlled patches, ask `run_temp` to return a complete unified Git diff in read-only mode, then pass the result to `submit_controlled_patch`. Refine through another temporary instruction using the earlier diff and requested changes. The retained proposal, validation, apply and commit services remain available, including proposals saved before this upgrade. Their internal generator also uses ephemeral execution if invoked by library consumers.
+All editing, validation and Git operations use `continue_work` or `run_temp`. A read-only temporary turn can still return a proposed diff as text, but there is no separate patch application service.
 
-Removed public APIs: `run_task`, `resume_codex_thread`, `generate_controlled_patch` and `refine_controlled_patch`. There is no duplicate compatibility routing. The public tools no longer require literal confirmation fields such as APPLY or EXECUTE; ordinary parameter and state validation remains.
+Removed public APIs include `run_task`, `resume_codex_thread`, `generate_controlled_patch`, `refine_controlled_patch`, `authorize_workspace_write`, `submit_controlled_patch`, `apply_controlled_patch`, `commit_controlled_patch`, `configure_validation_profile` and `validate_controlled_patch`. The patch engine and its supervisor service are deleted. Existing private patch/validation sidecars can be read as historical files and do not gate startup or execute through old task IDs. Public tools require no literal confirmation tokens.
 
 ## Waiting and completion
 
 `wait_task` waits up to 45 seconds per call. A timeout returns current status; when `ready=false`, the caller should issue another wait. Cancelling a wait leaves the execution running. These mechanics do not guarantee that ChatGPT itself will continue making calls after ending its response.
 
-`control_task` offers `steer` and `interrupt`. Successful new executions directly become `completed` and expose `output`; no separate acceptance gate is required. `task_result` also continues to read retained old controlled-patch results.
+`control_task` offers `steer` and `interrupt`. Successful new executions directly become `completed` and expose `output`; no separate acceptance gate is required. `task_result` reads retained executions in the work registry; old patch IDs are not current task IDs.
 
 Execution completion and goal completion are different facts. `finish_work` records the caller's completion decision with a summary and references. `open_work` can subsequently reopen it.
 

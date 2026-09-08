@@ -19,7 +19,7 @@ export interface ExecutorRequest {
   readonly threadName?: string;
   readonly taskId: Id;
   readonly instruction: string;
-  readonly sandbox?: SandboxMode;
+  readonly sandbox?: Exclude<SandboxMode, "workspace-write">;
   readonly model?: string;
   readonly reasoning_effort?: string;
   readonly threadId?: string | undefined;

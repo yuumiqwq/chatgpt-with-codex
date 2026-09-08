@@ -6,7 +6,7 @@ import { WorkService } from "./tasks/work-service.js";
 
 export function registerWorkTools(server: McpServer, works: WorkService) {
   const id = z.string().uuid(), text = z.string().min(1);
-  const access = z.enum(["read-only", "workspace-write", "danger-full-access"]);
+  const access = z.enum(["read-only", "danger-full-access"]);
   const turn = { instruction: text.max(200_000), model: text.optional(),
     reasoning_effort: text.optional(), access: access.optional() };
   const safe = async (operation: () => unknown) => {
@@ -28,7 +28,7 @@ export function registerWorkTools(server: McpServer, works: WorkService) {
       cwd: text.optional(), name: text.max(256).optional(), access: access.optional() }
   }, args => safe(() => works.open(args)));
   server.registerTool("continue_work", {
-    description: "Execute a turn in a durable work, reusing its native Codex UUID and history. Default access is danger-full-access: the current OS account can edit files, write Git metadata and access the network without an extra approval prompt. Select workspace-write or read-only when useful. Edits happen immediately and stopping does not undo them. Returns task_id; call wait_task again when ready=false until the run finishes. A completed run does not mark the work complete. Bridge coordinates its own executions only; other clients' activity is unknown.",
+    description: "Execute a turn in a durable work, reusing its native Codex UUID and history. Default access is danger-full-access: the current OS account can edit files, write Git metadata and access the network without an extra approval prompt. Select read-only for analysis that must not edit files. Edits happen immediately and stopping does not undo them. Returns task_id; call wait_task again when ready=false until the run finishes. A completed run does not mark the work complete. Bridge coordinates its own executions only; other clients' activity is unknown.",
     inputSchema: { work_id: id, ...turn }
   }, ({ work_id, ...args }) => safe(() => works.continue(work_id, args)));
   server.registerTool("run_temp", {

@@ -1,17 +1,21 @@
-## 当前 fork：持续工作与临时执行
-
-本分支已改用统一工作接口，使用方式见 [工作管理说明](docs/work-management.md) 和 [当前工具表](docs/tools.md)。open_work 同时处理新建、重新启用及接管已有对话；continue_work 复用已有 UUID；run_temp 运行临时任务，不留下新的 Codex 持久对话。默认允许 Codex 直接修改文件、操作 Git 和访问网络，也可按调用选择只读或工作区写入模式。
-
-工作状态、摘要与结果保存在工作区配置旁的独立文件中。归档和删除由调用方决定，未启用按时间自动删除原生历史；执行结果默认保留最近 100 条。移除了重复执行接口及公开参数中的固定确认字符串，已有受控补丁记录仍可使用。
-
-以下保留上游历史说明，其中旧工具名称、只读默认值和人工验收流程不再代表本分支当前接口；以以上两份文档及实时 tools/list 为准。
-
 # Engineering Bridge
 
-中文 README 已成为仓库默认首页：[简体中文](README.md)
+这个 fork 通过 MCP 让 ChatGPT 操作本地 Codex 或 DSH。1.7 版为持续工作复用原生任务历史，一次性执行使用不保存原生历史的临时模式；启用主机工具时共有 24 个接口，未启用时为 14 个。
 
-English README: [English](README.en.md)
+## 使用方式
 
-## 受控补丁验证（可选）
+先用 list_workspaces 或 list_codex_projects 按项目查找，再通过 list_work 找到已有工作。open_work 统一创建、重新打开或接管原生 Codex UUID；continue_work 复用历史并直接修改项目，run_temp 执行通用的一次性指令。
 
-校验是可选、按需的：使用 `configure_validation_profile` 为每个已登记工作区配置最多一个固定校验 profile，并要求精确 `CONFIGURE`（不复用 `AUTHORIZE`）；只有显式调用 `validate_controlled_patch` 才会运行校验，且该调用只接受 `patch_task_id`，不能携带命令、argv、shell 文本或超时。`apply_controlled_patch` 不会自动运行校验或测试，普通 Bridge 路径不变，也没有后台校验 worker/queue。命令是非空 argv 数组、不用 shell 字符串，省略超时时默认每步 600 秒、总预算 1200 秒。结果只有 `PASS`、`FAIL`、`INCOMPLETE`；unborn 仓库提案返回 `INCOMPLETE` 且 `reason: "unsupported_unborn_base"`。validation profile 与现有持久状态一起保存在三个本地 0600 sidecar 中，其中包括 `<config>.validation-profiles.json`。校验在临时 detached worktree 中进行，只保护已登记工作区整洁，不是主机级沙箱；只应为可信工作区配置完全信任的命令。详见 [简体中文 README](README.md)。
+wait_task 每次最多等待 45 秒，ready 为 false 时继续调用；取消等待不会停止执行。finish_work 保存调用方判断的目标完成状态，manage_work 与 work_retention 管理归档及保留期限。默认保存最近 100 份终态执行结果，不自动按天删除历史。
+
+Codex 默认使用 danger-full-access，可以按当前系统账户权限修改文件、联网和完成 Git 提交推送。需要明确限制为分析时可选 read-only，DSH 始终只读。公开接口已移除 workspace-write，也没有独立的受控补丁支线、结果接受步骤或固定确认文字。
+
+## 本机运行
+
+准备 Node.js 22 或更高版本、Git 和选定的执行器 CLI，并完成执行器登录。运行 npm ci 与 npm run build，然后以 node dist/src/mcp-stdio.js 加上工作区配置的绝对路径启动；配置格式参见 config/workspaces.example.json，主机工具读取相邻的 .host-policy.json。个人配置与凭据放在源码仓库之外。
+
+安装新版构建后重启 Bridge，并在 ChatGPT 插件管理中刷新工具资料，再打开新对话。推送 GitHub 不会自动部署本机服务，也不会修改 ChatGPT 连接的总简介。
+
+详细接口见 [工具清单](docs/tools.md)，状态与保留机制见 [工作管理](docs/work-management.md)，运行权限见 [安全说明](SECURITY.md)。[英文说明](README.en.md)提供相同的安装入口，旧版说明保存在 Git 历史中；当前 Windows 测试仍有已知平台相关失败，具体结果以每次发布验证记录为准。
+
+本项目基于 [wudy29/engineering-bridge](https://github.com/wudy29/engineering-bridge) 修改。

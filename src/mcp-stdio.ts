@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { WorkService } from "./tasks/work-service.js";
 import { registerWorkTools } from "./work-tools.js";
-import type { ExecutorFactory } from "./tasks/registered-workspace-task-service.js";
+import type { ExecutorFactory } from "./tasks/execution-types.js";
 import { CodexExecutor } from "./executors/codex-executor.js";
 import { DshExecutor } from "./executors/dsh-executor.js";
 import { VERSION } from "./version.js";
@@ -17,15 +17,6 @@ import { CoreError, serializeError } from "./core/errors.js";
 import { registerTaskResultTools } from "./task-result-tools.js";
 import { HostError, HostPolicy } from "./host/host-policy.js";
 import { registerHostTools } from "./host/host-tools.js";
-import { RegisteredWorkspaceTaskService } from "./tasks/registered-workspace-task-service.js";
-import { ControlledPatchService } from "./tasks/controlled-patch-service.js";
-import { ControlledPatchValidationService } from "./tasks/controlled-patch-validation-service.js";
-import {
-  type ValidationProfile,
-  type ValidationStep,
-  ValidationProfileStore
-} from "./tasks/validation-profile-store.js";
-import { ValidationProcessRunner } from "./tasks/validation-process-runner.js";
 import { ManagedWorkspaceCatalog } from "./workspaces/managed-workspace-catalog.js";
 import { RegisteredWorkspaceRegistry } from "./workspaces/registered-workspace-registry.js";
 import { WorkspaceOnboardingService } from "./workspaces/workspace-onboarding-service.js";
@@ -43,19 +34,6 @@ const ProjectRootEntrySchema = z.object({
 
 const WorkspaceConfigSchema = z.array(z.union([WorkspaceEntrySchema, ProjectRootEntrySchema]));
 
-const ValidationStepSchema = z.object({
-  name: z.string().min(1),
-  argv: z.array(z.string()).min(1),
-  timeout_seconds: z.number().int().positive().optional()
-}).strict();
-
-const ValidationProfileSchema = z.object({
-  preparation: z.array(ValidationStepSchema),
-  validation: z.array(ValidationStepSchema),
-  default_step_timeout_seconds: z.number().int().positive().optional().default(600),
-  total_timeout_seconds: z.number().int().positive().optional().default(1200)
-}).strict();
-
 type WorkspaceEntry = z.infer<typeof WorkspaceEntrySchema>;
 type ProjectRootEntry = z.infer<typeof ProjectRootEntrySchema>;
 
@@ -72,29 +50,6 @@ function parseWorkspaceConfig(source: string) {
     }
   }
   return entries;
-}
-
-function toValidationStep(
-  step: z.infer<typeof ValidationStepSchema>
-): ValidationStep {
-  return {
-    name: step.name,
-    argv: [step.argv[0]!, ...step.argv.slice(1)],
-    ...(step.timeout_seconds === undefined
-      ? {}
-      : { timeoutSeconds: step.timeout_seconds })
-  };
-}
-
-function toValidationProfile(
-  profile: z.infer<typeof ValidationProfileSchema>
-): ValidationProfile {
-  return {
-    preparation: profile.preparation.map(toValidationStep),
-    validation: profile.validation.map(toValidationStep),
-    defaultStepTimeoutSeconds: profile.default_step_timeout_seconds,
-    totalTimeoutSeconds: profile.total_timeout_seconds
-  };
 }
 
 function jsonContent(value: unknown) {
@@ -153,24 +108,6 @@ async function main(): Promise<void> {
         case "dsh": return new DshExecutor(workspaceRoot);
       }
     };
-  const service = new RegisteredWorkspaceTaskService(registry, executorFactory);
-  const controlledPatches = new ControlledPatchService(
-    registry,
-    service,
-    undefined,
-    `${configPath}.controlled-patches.json`
-  );
-  await controlledPatches.load();
-  const validationProfiles = new ValidationProfileStore(
-    `${configPath}.validation-profiles.json`
-  );
-  const validationRunner = new ValidationProcessRunner();
-  const validation = new ControlledPatchValidationService(
-    registry,
-    controlledPatches,
-    validationProfiles,
-    validationRunner
-  );
   const server = new McpServer({ name: "engineering-bridge", version: VERSION });
 
   const hostPolicy = await HostPolicy.load(resolve(configPath) + ".host-policy.json");
@@ -185,12 +122,12 @@ async function main(): Promise<void> {
     finally { sweeping = false; }
   };
   setInterval(() => { void sweep(); }, 3_600_000).unref();
-  registerHostTools(server, hostPolicy, service, {
+  registerHostTools(server, hostPolicy, {
     validateText: (path, content) => {
       if (relative(resolve(configPath), path) === "") parseWorkspaceConfig(content);
     },
     reloadWorkspaces: async () => {
-      if (service.hasPendingTasks() || works.hasPendingTasks()) throw new HostError("HOST_TASKS_PENDING", "Finish or accept pending tasks before reloading workspaces.");
+      if (works.hasPendingTasks()) throw new HostError("HOST_TASKS_PENDING", "Finish pending executions before reloading workspaces.");
       const entries = parseWorkspaceConfig(await readFile(configPath, "utf8"));
       const manual = entries.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry));
       const roots = entries.filter(isProjectRootEntry).map(entry => entry.root);
@@ -213,12 +150,7 @@ async function main(): Promise<void> {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }, async ({ query }) => jsonContent({ workspaces: registry.list(query) }));
 
-
-
-  registerTaskResultTools(server, {
-    taskView: id => works.taskView(id) ?? service.taskView(id),
-    waitTask: (id, timeout, signal) => works.taskView(id) ? works.waitTask(id, timeout, signal) : service.waitTask(id, timeout, signal)
-  });
+  registerTaskResultTools(server, works);
 
   server.registerTool("control_task", {
     description: "Steer or interrupt a running execution. Use continue_work for the next turn and finish_work for semantic completion.",
@@ -228,9 +160,9 @@ async function main(): Promise<void> {
       instruction: z.string().optional()
     }
   }, async ({ task_id, action, instruction }) => {
-    if (works.taskView(task_id) === undefined && service.taskView(task_id) === undefined) return unknownTask();
+    if (works.taskView(task_id) === undefined) return unknownTask();
     try {
-      const view = works.taskView(task_id) ? await works.controlTask(task_id, action, instruction) : await service.controlTask(task_id, action, instruction);
+      const view = await works.controlTask(task_id, action, instruction);
       return jsonContent({ task_id: view.taskId, state: view.state });
     } catch (error) {
       return { isError: true, ...jsonContent({ error: serializeError(error) }) };
@@ -238,7 +170,7 @@ async function main(): Promise<void> {
   });
 
   server.registerTool("bind_project", {
-    description: "Register an existing local project directory as a read-only workspace. The path must already exist inside a configured project_root.",
+    description: "Register an existing local project directory as a workspace. The path must already exist inside a configured project_root.",
     inputSchema: {
       project_path: z.string().min(1)
     }
@@ -251,7 +183,7 @@ async function main(): Promise<void> {
   });
 
   server.registerTool("create_project", {
-    description: "Create a new empty Git project directory inside a configured project_root and register it as a read-only workspace. only mkdir and git init are performed.",
+    description: "Create a new empty Git project directory inside a configured project_root and register it as a workspace. Only mkdir and git init are performed.",
     inputSchema: {
       parent: z.string().min(1),
       name: z.string().min(1)
@@ -259,92 +191,6 @@ async function main(): Promise<void> {
   }, async ({ parent, name }) => {
     try {
       return jsonContent(await onboarding.create({ parent, name }));
-    } catch (error) {
-      return { isError: true, ...jsonContent({ error: serializeError(error) }) };
-    }
-  });
-
-  server.registerTool("authorize_workspace_write", {
-    description: "Grant persistent controlled-write authorization to a managed workspace. Manual workspaces remain authoritative through workspaces.json. continue_work and run_temp expose their execution access separately.",
-    inputSchema: {
-      workspace_id: z.string().min(1)
-    }
-  }, async ({ workspace_id }) => {
-    try {
-      return jsonContent(await onboarding.authorizeWrite(workspace_id));
-    } catch (error) {
-      return { isError: true, ...jsonContent({ error: serializeError(error) }) };
-    }
-  });
-
-
-
-
-
-  server.registerTool("submit_controlled_patch", {
-    description: "Submit a caller-provided complete unified Git diff as a read-only patch proposal against exactly the current commit HEAD. Nothing is written until the returned task is applied; the proposal carries source: \"submitted\" and no executor identity.",
-    inputSchema: {
-      workspace_id: z.string().min(1),
-      base_head: z.string().min(1),
-      diff: z.string().min(1)
-    }
-  }, async ({ workspace_id, base_head, diff }) => {
-    try {
-      const proposal = await controlledPatches.submit({ workspace_id, base_head, diff });
-      return jsonContent({ task_id: proposal.taskId, base_head: proposal.baseHead });
-    } catch (error) {
-      return { isError: true, ...jsonContent({ error: serializeError(error) }) };
-    }
-  });
-
-  server.registerTool("apply_controlled_patch", {
-    description: "Apply one reviewed patch proposal. This tool can modify validated tracked text files or add absent 100644 text files, but never stages, commits, or pushes.",
-    inputSchema: {
-      patch_task_id: z.string().min(1)
-    }
-  }, async ({ patch_task_id }) => jsonContent(
-    await controlledPatches.apply({ patch_task_id, confirmation: "APPLY" })
-  ));
-
-  server.registerTool("commit_controlled_patch", {
-    description: "Create one Git commit containing only an already-APPLYed controlled patch. Never pushes.",
-    inputSchema: {
-      patch_task_id: z.string().min(1),
-      message: z.string().min(1)
-    }
-  }, async ({ patch_task_id, message }) => jsonContent(
-    await controlledPatches.commit({
-      patch_task_id,
-      message,
-      confirmation: "COMMIT"
-    })
-  ));
-
-  server.registerTool("configure_validation_profile", {
-    description: "Configure the fixed validation profile for a registered workspace.",
-    inputSchema: z.object({
-      workspace_id: z.string().min(1),
-      profile: ValidationProfileSchema
-    }).strict()
-  }, async ({ workspace_id, profile }) => {
-    try {
-      return jsonContent(await validation.configure(
-        workspace_id,
-        toValidationProfile(profile)
-      ));
-    } catch (error) {
-      return { isError: true, ...jsonContent({ error: serializeError(error) }) };
-    }
-  });
-
-  server.registerTool("validate_controlled_patch", {
-    description: "Validate one retained controlled patch with its workspace's configured profile.",
-    inputSchema: z.object({
-      patch_task_id: z.string().min(1)
-    }).strict()
-  }, async ({ patch_task_id }) => {
-    try {
-      return jsonContent(await validation.validate(patch_task_id));
     } catch (error) {
       return { isError: true, ...jsonContent({ error: serializeError(error) }) };
     }

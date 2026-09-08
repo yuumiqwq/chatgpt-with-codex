@@ -1,3 +1,9 @@
+## 1.7.0-local.1
+
+- Remove the remaining six patch/write-authorization tools and the patch, validation and supervisor engines, leaving 24 host-enabled tools.
+- Keep full access as default and read-only as the only optional restriction. Normalize old workspace-write work settings while preserving historical run evidence.
+- Replace obsolete top-level documentation with the current workflow. Persisted legacy proposal files are historical data and no longer loaded as runtime tasks.
+
 ## 1.6.0-local.1
 
 - Unify create/adopt/reopen and same-UUID continuation; persist summaries, results and restart interruption state.

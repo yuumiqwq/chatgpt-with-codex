@@ -938,17 +938,17 @@ test("native resume uses the requested thread and configured provider without ch
   assert.deepEqual(turn.params.sandboxPolicy, { type: "readOnly", networkAccess: false });
 });
 
-test("native write resume applies workspace-write to both the thread and the turn", async () => {
+test("native full-access resume applies full access to both thread and turn", async () => {
   const invocations: Invocation[] = [];
   const executor = timedExecutor(fakeStarter({ appServerOutput: "edited" }, invocations), "linux");
   const result = await executor.execute({
-    taskId: TASK_ID, instruction: "edit and test", threadId: "thread-1", sandbox: "workspace-write"
+    taskId: TASK_ID, instruction: "edit and test", threadId: "thread-1", sandbox: "danger-full-access"
   });
   assert.equal(result.kind, "completed");
   const messages = invocations[0]!.stdin.trim().split("\n").map(line => JSON.parse(line));
-  assert.equal(messages.find(message => message.method === "thread/resume").params.sandbox, "workspace-write");
+  assert.equal(messages.find(message => message.method === "thread/resume").params.sandbox, "danger-full-access");
   assert.deepEqual(messages.find(message => message.method === "turn/start").params.sandboxPolicy,
-    { type: "workspaceWrite", writableRoots: [TRUSTED_CWD], networkAccess: false });
+    { type: "dangerFullAccess" });
 });
 
 test("cross-home resume uses an explicitly verified rollout path and refuses a different returned UUID", async () => {
