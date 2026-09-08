@@ -10,7 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { ExecutorRequest } from "../../../src/executors/executor.js";
 import { locateCodexSession } from "../../../src/host/codex-sessions.js";
-import { listCodexThreads } from "../../../src/host/codex-thread-list.js";
+import { listCodexProjects, listCodexThreads } from "../../../src/host/codex-thread-list.js";
 import { runHostCommand } from "../../../src/host/host-command.js";
 import { HostFiles } from "../../../src/host/host-files.js";
 import { containsPath, HostError, HostPolicy } from "../../../src/host/host-policy.js";
@@ -254,6 +254,7 @@ test("MCP advertises enabled tools, enforces exact delete confirmation and audit
   const names = (await client.listTools()).tools.map(tool => tool.name);
   assert.ok(names.includes("resume_codex_thread"));
   assert.ok(names.includes("list_codex_threads"));
+  assert.ok(names.includes("list_codex_projects"));
   assert.ok(names.includes("run_host_command"));
   const path = join(f.allowed, "note.txt");
   const content = "private-content-marker";
@@ -353,4 +354,48 @@ test("native catalog rejects unconfigured homes, bad limits and invalid protocol
   await assert.rejects(listCodexThreads(f.policy, {}, undefined, async () => ({ data: [{ id: "invented" }] })),
     hostCode("CODEX_CATALOG_FAILED"));
   assert.equal((await listCodexThreads(f.policy, {}, undefined, query)).next_cursor, null);
+});
+
+test("project browsing groups conversations by cwd and supplies an exact scoped follow-up", async t => {
+  const f = await fixture(t);
+  const base = { id: THREAD_ID, cwd: f.allowed, name: "Old title", preview: "", createdAt: 1, updatedAt: 2 };
+  const result = await listCodexProjects(f.policy, { archived: true }, undefined, async (_home, params) => {
+    assert.equal(params.limit, 50);
+    assert.equal(params.archived, true);
+    return { data: [base, { ...base, updatedAt: 10, name: "Newest title" },
+      { ...base, cwd: f.readOnly, updatedAt: 5 }], nextCursor: "next-project-page" };
+  });
+  assert.equal(result.projects.length, 2);
+  assert.equal(result.projects[0]!.cwd, f.allowed);
+  assert.equal(result.projects[0]!.thread_count_in_page, 2);
+  assert.equal(result.projects[0]!.latest_title, "Newest title");
+  assert.equal(result.projects[0]!.last_updated_at, 10);
+  assert.deepEqual(result.projects[0]!.thread_list_arguments,
+    { cwd: f.allowed, codex_home: f.codexHome, archived: true });
+  assert.equal(result.next_cursor, "next-project-page");
+  assert.match(result.counts_scope, /current page only/u);
+});
+
+test("project-name search retains same-name directories and a cursor after an empty filtered page", async t => {
+  const f = await fixture(t);
+  const first = join(f.allowed, "shared-project");
+  const second = join(f.readOnly, "shared-project");
+  await mkdir(first);
+  await mkdir(second);
+  const query = async (_home: string, params: Record<string, unknown>) => {
+    assert.equal(params.searchTerm, undefined);
+    assert.equal(params.cursor, "page-one");
+    const base = { id: THREAD_ID, cwd: first, name: "Unrelated conversation title", preview: "", createdAt: 1, updatedAt: 2 };
+    return { data: [base, { ...base, cwd: second }, { ...base, cwd: f.outside }], nextCursor: "page-two" };
+  };
+  const options = { query: "SHARED-project", cursor: "page-one" };
+  const result = await listCodexProjects(f.policy, options, undefined, query);
+  assert.equal(result.projects.length, 2);
+  assert.ok(result.projects.every(item => item.name === "shared-project"));
+  assert.notEqual(result.projects[0]!.cwd, result.projects[1]!.cwd);
+  assert.equal(result.scanned_threads, 3);
+  assert.equal(result.omitted_count, 1);
+  const empty = await listCodexProjects(f.policy, { ...options, query: "not-on-this-page" }, undefined, query);
+  assert.equal(empty.projects.length, 0);
+  assert.equal(empty.next_cursor, "page-two");
 });

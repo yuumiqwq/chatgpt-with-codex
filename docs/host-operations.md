@@ -80,6 +80,20 @@ background processes; bounded output is not a content or execution sandbox.
 
 ## Native Codex continuation
 
+For project-first browsing, call `list_codex_projects(query?, codex_home?, cursor?,
+scan_limit?, archived?)`. It groups a page of up to 50 recent threads by their
+original working directory and returns folder names, full paths, the latest title
+in that page, and `thread_list_arguments` for `list_codex_threads`. Project name/path
+matching is separate from thread-title matching. Same folder names at different
+paths remain separate candidates; these groups do not claim to reproduce every
+custom grouping in the Codex desktop UI.
+
+Counts are `thread_count_in_page`, not installation-wide totals. A project may
+appear on later pages again. Follow `next_cursor` to browse older projects, even
+when a name filter leaves the current page empty. After choosing a project, the
+returned exact cwd filters the native thread list before it returns conversation
+previews, reducing unrelated results.
+
 `list_codex_threads(query?, cwd?, codex_home?, cursor?, limit?, archived?)` discovers
 stored local conversations without a user-supplied UUID. It uses the CLI's native
 `thread/list` metadata request without starting a model turn. A page contains at
@@ -119,6 +133,9 @@ Duplicate running or pending-review resumes in this Bridge are rejected. Resume 
 this process cannot lock a conversation active in another Codex client.
 Catalog activity in other clients is reported as unknown. Ask the user when title
 or project matching leaves multiple plausible candidates; do not invent a UUID.
+Opening a conversation to read it does not itself start another turn. Avoid
+concurrent execution or steering from separate clients, rather than closing every
+window that displays the conversation.
 
 The launcher can point `CODEX_HOME` at an existing authenticated home, avoiding
 credential copying. An optional `ENGINEERING_BRIDGE_CODEX_AUTH_HOME` keeps

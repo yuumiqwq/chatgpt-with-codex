@@ -1,5 +1,5 @@
 import { lstat } from "node:fs/promises";
-import { relative } from "node:path";
+import { basename, relative } from "node:path";
 import { z } from "zod";
 import { startCodexAppServer, type ProcessStarter } from "../executors/codex-process.js";
 import { signalExecution } from "../executors/executor.js";
@@ -111,4 +111,48 @@ export async function listCodexThreads(policy: HostPolicy, options: {
     next_cursor: parsed.data.nextCursor ?? null, archived: options.archived ?? false,
     omitted_count: parsed.data.data.length - threads.length,
     content: "Titles and short previews only; listing does not resume or modify conversations." };
+}
+
+export async function listCodexProjects(policy: HostPolicy, options: {
+  query?: string; codex_home?: string; cursor?: string; scan_limit?: number; archived?: boolean;
+}, signal?: AbortSignal, query: ThreadListQuery = queryCodexThreadList) {
+  // Project names filter directory groups, never the thread title search.
+  const page = await listCodexThreads(policy, {
+    limit: options.scan_limit ?? 50,
+    ...(options.codex_home === undefined ? {} : { codex_home: options.codex_home }),
+    ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    ...(options.archived === undefined ? {} : { archived: options.archived })
+  }, signal, query);
+  type Project = {
+    name: string; cwd: string; thread_count_in_page: number; last_updated_at: number;
+    latest_thread_id: string; latest_title: string; can_resume_with_write: boolean;
+    thread_list_arguments: { cwd: string; codex_home: string; archived: boolean };
+  };
+  const projects: Project[] = [];
+  for (const thread of page.threads) {
+    let project = projects.find(item => relative(item.cwd, thread.cwd) === "");
+    if (!project) {
+      project = { name: basename(thread.cwd) || thread.cwd, cwd: thread.cwd, thread_count_in_page: 0,
+        last_updated_at: thread.updated_at, latest_thread_id: thread.thread_id, latest_title: thread.title,
+        can_resume_with_write: thread.can_resume_with_write,
+        thread_list_arguments: { cwd: thread.cwd, codex_home: page.codex_home, archived: page.archived } };
+      projects.push(project);
+    }
+    project.thread_count_in_page++;
+    if (thread.updated_at > project.last_updated_at) {
+      project.last_updated_at = thread.updated_at;
+      project.latest_thread_id = thread.thread_id;
+      project.latest_title = thread.title;
+    }
+  }
+  const term = options.query?.trim().toLowerCase();
+  return {
+    projects: projects.filter(item => !term || item.name.toLowerCase().includes(term) || item.cwd.toLowerCase().includes(term))
+      .sort((a, b) => b.last_updated_at - a.last_updated_at || a.cwd.localeCompare(b.cwd)),
+    codex_home: page.codex_home, available_codex_homes: page.available_codex_homes,
+    next_cursor: page.next_cursor, archived: page.archived, scanned_threads: page.threads.length + page.omitted_count,
+    omitted_count: page.omitted_count, grouping: "original working directory",
+    counts_scope: "current page only; a project may appear again on later pages",
+    next_step: "Call list_codex_threads with the selected project's thread_list_arguments. An empty project search with next_cursor is not an exhaustive miss."
+  };
 }

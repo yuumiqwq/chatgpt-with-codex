@@ -1,5 +1,13 @@
 # Release notes
 
+## v1.5.0-local.3
+
+Add project-first native conversation browsing. `list_codex_projects` groups a
+bounded page by original cwd, supports project-name/path matching and provides
+exact arguments for the existing per-project thread list. Counts are explicitly
+page-local, same-name directories remain distinct, and older projects remain
+reachable through the native cursor.
+
 ## v1.5.0-local.2
 
 Discover local Codex conversations by title or project without manually supplying

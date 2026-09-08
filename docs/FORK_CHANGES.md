@@ -11,6 +11,10 @@ native UUIDs with search, project filters and pagination. Host commands require 
 and run with OS account privileges; file roots are not a command sandbox.
 See [host operations](host-operations.md) for settings and limits.
 
+`list_codex_projects` adds project-first navigation: group by original directory,
+match project names or paths, then use the returned exact per-project thread-list
+arguments. Counts cover the current bounded page, not the entire installation.
+
 This fork adds `list_workspaces` to discover registered project names, IDs,
 paths, and controlled-write authorization. Its optional query uses a
 case-insensitive substring filter; the calling model interprets natural
