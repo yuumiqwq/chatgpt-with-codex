@@ -2,6 +2,21 @@
 
 This fork connects ChatGPT to local Codex and DSH through MCP. Version 1.7 uses durable work for ongoing tasks and ephemeral execution for one-off instructions. It exposes 24 tools with host operations enabled, or 14 without them.
 
+## Changes from upstream
+
+This comparison is against the fork point, upstream v1.4.2 at [`ddabd94`](https://github.com/wudy29/engineering-bridge/commit/ddabd9486c6a997fc73326267487c31ee4788095). It does not describe later upstream development.
+
+| Area | Upstream fork point | This fork |
+| --- | --- | --- |
+| Continuation | Native context supports supervised continuation; Bridge supervision state may be lost on restart | Persist work IDs, summaries and native UUIDs; unify create/reopen/adopt and resume the same history after restart |
+| Editing | Read-only executors prepare proposals; separate patch APIs require APPLY/COMMIT confirmation | Codex defaults to direct file, Git and network access; explicit read-only remains, and legacy patch services are removed |
+| One-off execution | Task and patch APIs start executions | General run_temp uses native ephemeral mode without saving a resumable Codex conversation |
+| Discovery | Registered workspace IDs are the principal entry point | Find workspaces and native Codex history by project, then adopt an existing task |
+| Completion and retention | Supervision, review and acceptance manage each run | Distinguish run completion from goal completion; retain summaries and expose archive/retention settings |
+| Host operations | Registered-project tasks and patches are the main entry points | Optional file/command tools and workspace configuration reload, enabled by local configuration |
+
+This is an incompatible tool-surface change: ten legacy public APIs have been removed. See [fork changes](docs/FORK_CHANGES.md) for the exact migration list, implementation references and validation scope.
+
 ## Workflow
 
 Find the project with list_workspaces or list_codex_projects. Use list_work to find an existing registered work, then open_work to create, reopen or adopt a native Codex UUID. continue_work reuses that history and directly edits the project. run_temp executes a general one-off instruction without persisting a native Codex conversation.
