@@ -41,3 +41,5 @@ After installing an updated build, restart Bridge and refresh the connection's m
 - [Release notes](RELEASE_NOTES.md)
 
 The current implementation is a fork of [wudy29/engineering-bridge](https://github.com/wudy29/engineering-bridge). Earlier release descriptions remain in Git history; they do not describe the current tool surface. Run npm test for the suite; the existing Windows suite has known platform-related failures, so consult the recorded validation for each release.
+
+On Windows, Git, DSH, Codex and host command processes started directly by Bridge hide their console windows while returning captured output through tools. Windows opened explicitly by executors are outside this guarantee.

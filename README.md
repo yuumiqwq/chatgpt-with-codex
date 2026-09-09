@@ -25,6 +25,8 @@ wait_task 每次最多等待 45 秒，ready 为 false 时继续调用；取消�
 
 Codex 默认使用 danger-full-access，可以按当前系统账户权限修改文件、联网和完成 Git 提交推送。需要明确限制为分析时可选 read-only，DSH 始终只读。公开接口已移除 workspace-write，也没有独立的受控补丁支线、结果接受步骤或固定确认文字。
 
+Windows 下，Bridge 直接启动的 Git、DSH、Codex 和主机命令进程均设置为隐藏控制台窗口，输出仍通过工具结果返回；执行器内部主动打开的窗口不在此保证范围内。
+
 ## 本机运行
 
 准备 Node.js 22 或更高版本、Git 和选定的执行器 CLI，并完成执行器登录。运行 npm ci 与 npm run build，然后以 node dist/src/mcp-stdio.js 加上工作区配置的绝对路径启动；配置格式参见 config/workspaces.example.json，主机工具读取相邻的 .host-policy.json。个人配置与凭据放在源码仓库之外。
