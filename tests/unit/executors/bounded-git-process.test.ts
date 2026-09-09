@@ -63,6 +63,7 @@ test("bounded git resolves normal completion and clears its deadline", async () 
     assert.deepEqual(args, ["status", "--porcelain"]);
     assert.equal(options.cwd, "/workspace");
     assert.equal(options.shell, false);
+    assert.equal(options.windowsHide, true);
     assert.equal(options.detached, true);
     return child;
   };

@@ -183,6 +183,7 @@ export class DshExecutor implements Executor {
       child = this.startProcess(command.executable, [...command.args, request.instruction], {
         cwd: this.workspaceRoot,
         shell: false,
+        windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
         detached: this.platform !== "win32",
         env: environment(this.hostEnvironment)

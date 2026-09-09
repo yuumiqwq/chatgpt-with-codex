@@ -68,6 +68,7 @@ export function runBoundedGit(
       const spawnOptions: SpawnOptionsWithoutStdio = {
         cwd,
         shell: false,
+        windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"]
       };
       if (platform !== "win32") spawnOptions.detached = true;

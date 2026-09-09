@@ -159,6 +159,7 @@ test("uses the official headless interface with a fixed workspace and returns fi
   assert.deepEqual(invocation.args, ["--profile", "headless", instruction]);
   assert.equal(invocation.options.cwd, TRUSTED_CWD);
   assert.equal(invocation.options.shell, false);
+  assert.equal(invocation.options.windowsHide, true);
   assert.deepEqual(invocation.options.stdio, ["pipe", "pipe", "pipe"]);
   assert.deepEqual(invocation.options.env, {
     PATH: "/test/bin",
@@ -700,6 +701,7 @@ test("win32: a real dsh.exe on PATH is spawned directly with the headless args",
   assert.equal(invocation.executable, join(dir, "dsh.exe"));
   assert.deepEqual(invocation.args, ["--profile", "headless", instruction]);
   assert.equal(invocation.options.shell, false);
+  assert.equal(invocation.options.windowsHide, true);
 });
 
 test("win32: an npm dsh.cmd shim resolves to its Node target, keeping the instruction a plain argv element", async () => {
@@ -721,6 +723,7 @@ test("win32: an npm dsh.cmd shim resolves to its Node target, keeping the instru
   assert.equal(invocation.executable, process.execPath);
   assert.deepEqual(invocation.args, [binJs, "--profile", "headless", instruction]);
   assert.equal(invocation.options.shell, false);
+  assert.equal(invocation.options.windowsHide, true);
 });
 
 test("win32: a local node_modules/.bin dsh.cmd shim also resolves to its Node target", async () => {
