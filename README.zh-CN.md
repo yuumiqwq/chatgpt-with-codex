@@ -9,7 +9,7 @@
 | 方面 | 原仓库的分叉基线 | 本 fork 当前实现 |
 | --- | --- | --- |
 | 工作延续 | 原生上下文支持监督式继续，Bridge 的监督状态可在重启后丢失 | 保存工作编号、摘要和原生 UUID；统一创建、重新打开与接管，重启后可继续同一份历史 |
-| 文件修改 | 执行器只读生成提案，通过独立补丁接口及 APPLY/COMMIT 确认写入和提交 | Codex 与 DSH 均可直接修改文件，使用相同的 access 选项且默认完全访问；移除旧补丁支线 |
+| 文件修改 | 通过独立的提案和应用流程修改项目 | Codex 与 DSH 均使用每次执行的 access 直接工作，默认完全访问 |
 | 一次性执行 | 通过任务或补丁接口发起执行 | 通用 run_temp 可选 Codex 或 DSH；Codex 使用原生临时模式，DSH 使用一次性 headless 执行 |
 | 项目与历史查找 | 主要依赖已登记的工作区编号 | 按项目查找工作区和本地 Codex 历史，可接管已有任务 |
 | 完成与留存 | 以监督、审阅和接受结果的流程管理每轮执行 | 区分执行结束和目标完成；提供工作摘要、归档及可配置的保留期限 |
@@ -25,7 +25,7 @@ wait_task 每次最多等待 45 秒，ready 为 false 时继续调用；取消�
 
 Codex 与 DSH 均支持 read-only 和 danger-full-access；run_temp 对两者都默认使用 danger-full-access，并按每次调用的 access 选择权限。完全访问允许执行器按当前系统账户权限修改文件及执行命令；Codex 通过原生沙箱配置接收权限，DSH 通过每次进程的 DSH_PERMISSION_MODE 接收权限，具体限制见[安全说明](SECURITY.md)。
 
-DSH 继续使用一次性 headless 接口，不返回可续接的 Codex UUID，也不接受 Codex 专用的 model 和 reasoning_effort。公开接口已移除 workspace-write，没有独立的受控补丁支线、结果接受步骤或固定确认文字。
+workspace 只保存项目编号、名称、根目录和来源，并以 project_root 限制可登记项目。执行器写权限由 open_work、continue_work 和 run_temp 的 access 决定；Bridge 自身的文件与命令工具由独立的 host policy 控制。DSH 继续使用一次性 headless 接口，不返回可续接的 Codex UUID，也不接受 Codex 专用的 model 和 reasoning_effort。
 
 Windows 下，Bridge 直接启动的 Git、DSH、Codex 和主机命令进程均设置为隐藏控制台窗口，输出仍通过工具结果返回；执行器内部主动打开的窗口不在此保证范围内。
 

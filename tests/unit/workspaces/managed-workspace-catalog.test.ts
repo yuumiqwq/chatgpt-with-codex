@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { CoreError } from "../../../src/core/errors.js";
@@ -15,183 +15,101 @@ function expectCode(action: () => Promise<unknown>, code: string): Promise<void>
   return assert.rejects(action, (error: unknown) => error instanceof CoreError && error.code === code);
 }
 
-test("loads an absent catalog as empty and round-trips registrations through the file", async () => {
+const canonical = (name: string): string => resolve("catalog-fixtures", name);
+
+test("loads an absent catalog and round-trips identity records with schema version 2", async () => {
   const directory = mkdtempSync(join(tmpdir(), "bridge-catalog-"));
   const path = join(directory, "managed-workspaces.json");
   const catalog = new ManagedWorkspaceCatalog(path);
   await catalog.load();
-  assert.deepEqual(catalog.entries(), []);
-
-  const first = await catalog.registerOnce("/canonical/a");
-  assert.equal(first.created, true);
-  const second = await catalog.registerOnce("/canonical/b");
-
+  const firstRoot = canonical("a"), secondRoot = canonical("b");
+  const first = await catalog.registerOnce(firstRoot);
+  const second = await catalog.registerOnce(secondRoot);
   const reloaded = new ManagedWorkspaceCatalog(path);
   await reloaded.load();
   assert.deepEqual(reloaded.entries(), [
-    { id: first.id, root: "/canonical/a", allowWrite: false },
-    { id: second.id, root: "/canonical/b", allowWrite: false }
+    { id: first.id, root: firstRoot },
+    { id: second.id, root: secondRoot }
   ]);
-  // Atomic writes leave no temporary files behind.
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), {
+    version: 2, workspaces: reloaded.entries()
+  });
   assert.deepEqual(readdirSync(directory), ["managed-workspaces.json"]);
 });
 
-test("registerOnce returns the existing id for the same root without duplicating", async () => {
-  const catalog = new ManagedWorkspaceCatalog(undefined);
-  const first = await catalog.registerOnce("/canonical/a");
-  const second = await catalog.registerOnce("/canonical/a");
-
-  assert.equal(second.id, first.id);
-  assert.equal(second.created, false);
-  assert.deepEqual(catalog.entries(), [{ id: first.id, root: "/canonical/a", allowWrite: false }]);
-});
-
-test("concurrent registerOnce calls for the same root converge on one id and one record", async () => {
+test("registerOnce returns the stable id for repeated and concurrent registration", async () => {
   const path = catalogPath();
   const catalog = new ManagedWorkspaceCatalog(path);
   await catalog.load();
-
   const [first, second] = await Promise.all([
-    catalog.registerOnce("/canonical/same"),
-    catalog.registerOnce("/canonical/same")
+    catalog.registerOnce(canonical("same")),
+    catalog.registerOnce(canonical("same"))
   ]);
-
+  const third = await catalog.registerOnce(canonical("same"));
   assert.equal(first.id, second.id);
+  assert.equal(first.id, third.id);
   assert.notEqual(first.created, second.created);
-
-  const reloaded = new ManagedWorkspaceCatalog(path);
-  await reloaded.load();
-  assert.deepEqual(reloaded.entries(), [{ id: first.id, root: "/canonical/same", allowWrite: false }]);
+  assert.equal(third.created, false);
+  assert.deepEqual(catalog.entries(), [{ id: first.id, root: canonical("same") }]);
 });
 
-test("a persist failure rolls back the in-memory record and allows a later retry", async () => {
+test("a persist failure rolls back the in-memory record and permits retry", async () => {
   const path = catalogPath();
   const catalog = new ManagedWorkspaceCatalog(path);
   await catalog.load();
-
-  // Block the state file path with a directory so the atomic rename fails.
   mkdirSync(path);
-  await expectCode(() => catalog.registerOnce("/canonical/x"), "INTERNAL_ERROR");
+  await expectCode(() => catalog.registerOnce(canonical("x")), "INTERNAL_ERROR");
   assert.deepEqual(catalog.entries(), []);
-
   rmSync(path, { recursive: true, force: true });
-  const retried = await catalog.registerOnce("/canonical/x");
-  assert.equal(retried.created, true);
-  const reloaded = new ManagedWorkspaceCatalog(path);
-  await reloaded.load();
-  assert.deepEqual(reloaded.entries(), [{ id: retried.id, root: "/canonical/x", allowWrite: false }]);
+  const retried = await catalog.registerOnce(canonical("x"));
+  assert.deepEqual(catalog.entries(), [{ id: retried.id, root: canonical("x") }]);
 });
 
-test("skips individually invalid records and rejects a corrupt whole file", async () => {
+test("migrates a version 1 catalog once while preserving every valid id and root", async () => {
   const path = catalogPath();
+  const expected = [
+    { id: "00000000-0000-4000-8000-000000000001", root: canonical("old") },
+    { id: "00000000-0000-4000-8000-000000000002", root: canonical("authorized") }
+  ];
   writeFileSync(path, `${JSON.stringify({
     version: 1,
+    workspaces: [expected[0], { ...expected[1], allow_write: true }]
+  }, null, 2)}\n`);
+  const catalog = new ManagedWorkspaceCatalog(path);
+  await catalog.load();
+  assert.deepEqual(catalog.entries(), expected);
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { version: 2, workspaces: expected });
+  const reloaded = new ManagedWorkspaceCatalog(path);
+  await reloaded.load();
+  assert.deepEqual(reloaded.entries(), expected);
+});
+
+test("skips invalid records and rejects corrupt or unsupported whole files", async () => {
+  const path = catalogPath();
+  writeFileSync(path, `${JSON.stringify({
+    version: 2,
     workspaces: [
-      { id: "not-a-uuid", root: "/canonical/bad-id" },
+      { id: "not-a-uuid", root: canonical("bad-id") },
       { id: "00000000-0000-4000-8000-000000000001", root: "relative/root" },
-      { id: "00000000-0000-4000-8000-000000000002", root: "/canonical/ok" },
-      { id: "00000000-0000-4000-8000-000000000002", root: "/canonical/dup-id" },
-      { id: "00000000-0000-4000-8000-000000000003", root: "/canonical/ok" }
+      { id: "00000000-0000-4000-8000-000000000002", root: canonical("ok") },
+      { id: "00000000-0000-4000-8000-000000000002", root: canonical("dup-id") },
+      { id: "00000000-0000-4000-8000-000000000003", root: canonical("ok") }
     ]
   }, null, 2)}\n`);
-
   const catalog = new ManagedWorkspaceCatalog(path);
   await catalog.load();
   assert.deepEqual(catalog.entries(), [
-    { id: "00000000-0000-4000-8000-000000000002", root: "/canonical/ok", allowWrite: false }
+    { id: "00000000-0000-4000-8000-000000000002", root: canonical("ok") }
   ]);
-
   writeFileSync(path, "not json at all");
   await expectCode(() => new ManagedWorkspaceCatalog(path).load(), "INTERNAL_ERROR");
-
-  writeFileSync(path, `${JSON.stringify({ version: 2, workspaces: [] })}\n`);
+  writeFileSync(path, `${JSON.stringify({ version: 3, workspaces: [] })}\n`);
   await expectCode(() => new ManagedWorkspaceCatalog(path).load(), "INTERNAL_ERROR");
 });
 
-test("a catalog without a state file path stays process-local", async () => {
+test("a catalog without a state path stays process-local", async () => {
   const catalog = new ManagedWorkspaceCatalog(undefined);
   await catalog.load();
-  const { id } = await catalog.registerOnce("/canonical/local");
-  assert.deepEqual(catalog.entries(), [{ id, root: "/canonical/local", allowWrite: false }]);
-});
-
-test("loads pre-authorization v1 records as read-only and round-trips authorized records", async () => {
-  const path = catalogPath();
-  writeFileSync(path, `${JSON.stringify({
-    version: 1,
-    workspaces: [
-      { id: "00000000-0000-4000-8000-000000000001", root: "/canonical/old" },
-      { id: "00000000-0000-4000-8000-000000000002", root: "/canonical/authorized", allow_write: true }
-    ]
-  }, null, 2)}\n`);
-
-  const catalog = new ManagedWorkspaceCatalog(path);
-  await catalog.load();
-  assert.deepEqual(catalog.entries(), [
-    { id: "00000000-0000-4000-8000-000000000001", root: "/canonical/old", allowWrite: false },
-    { id: "00000000-0000-4000-8000-000000000002", root: "/canonical/authorized", allowWrite: true }
-  ]);
-
-  const reloaded = new ManagedWorkspaceCatalog(path);
-  await reloaded.load();
-  assert.deepEqual(reloaded.entries(), catalog.entries());
-});
-
-test("registerOnce records stay read-only until authorize flips the record persistently", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "bridge-catalog-auth-"));
-  const path = join(directory, "managed-workspaces.json");
-  const catalog = new ManagedWorkspaceCatalog(path);
-  await catalog.load();
-  const { id } = await catalog.registerOnce("/canonical/auth");
-  assert.equal(catalog.entries()[0]?.allowWrite, false);
-
-  await catalog.authorize("/canonical/auth");
-  assert.equal(catalog.entries()[0]?.allowWrite, true);
-
-  const reloaded = new ManagedWorkspaceCatalog(path);
-  await reloaded.load();
-  assert.deepEqual(reloaded.entries(), [{ id, root: "/canonical/auth", allowWrite: true }]);
-});
-
-test("authorize is idempotent and unknown roots fail closed", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "bridge-catalog-idem-"));
-  const path = join(directory, "managed-workspaces.json");
-  const catalog = new ManagedWorkspaceCatalog(path);
-  await catalog.load();
-  await catalog.registerOnce("/canonical/idem");
-
-  await catalog.authorize("/canonical/idem");
-  await catalog.authorize("/canonical/idem");
-  assert.equal(catalog.entries()[0]?.allowWrite, true);
-  await expectCode(() => catalog.authorize("/canonical/unknown"), "INTERNAL_ERROR");
-  assert.equal(readdirSync(directory).length, 1); // no extra temporary files
-});
-
-test("concurrent authorize calls converge and a persist failure rolls back the in-memory record", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "bridge-catalog-conc-"));
-  const path = join(directory, "managed-workspaces.json");
-  const catalog = new ManagedWorkspaceCatalog(path);
-  await catalog.load();
-  await catalog.registerOnce("/canonical/concurrent");
-
-  await Promise.all([
-    catalog.authorize("/canonical/concurrent"),
-    catalog.authorize("/canonical/concurrent")
-  ]);
-  assert.equal(catalog.entries()[0]?.allowWrite, true);
-
-  // Replace the state file with a directory so the atomic rename fails.
-  const blockedPath = join(directory, "blocked.json");
-  const blocked = new ManagedWorkspaceCatalog(blockedPath);
-  await blocked.load();
-  await blocked.registerOnce("/canonical/blocked");
-  rmSync(blockedPath);
-  mkdirSync(blockedPath);
-  await expectCode(() => blocked.authorize("/canonical/blocked"), "INTERNAL_ERROR");
-  assert.equal(blocked.entries()[0]?.allowWrite, false);
-
-  // The same catalog can authorize once the blocker is gone.
-  rmSync(blockedPath, { recursive: true, force: true });
-  await blocked.authorize("/canonical/blocked");
-  assert.equal(blocked.entries()[0]?.allowWrite, true);
+  const { id } = await catalog.registerOnce(canonical("local"));
+  assert.deepEqual(catalog.entries(), [{ id, root: canonical("local") }]);
 });

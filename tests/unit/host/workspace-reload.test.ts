@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { containsPath } from "../../../src/host/host-policy.js";
 
-test("MCP validates self-configuration before writing and reloads manual permissions", async t => {
+test("MCP validates and reloads workspace identity configuration", async t => {
   const root = await mkdtemp(join(tmpdir(), "bridge-reload-"));
   const project = join(root, "project");
   await mkdir(project);
@@ -34,20 +34,25 @@ test("MCP validates self-configuration before writing and reloads manual permiss
     return { error: response.isError === true, body: JSON.parse(items[0]!.text) };
   };
   const before = await call("list_workspaces");
-  assert.equal(before.body.workspaces[0].allow_write, false);
+  assert.deepEqual(Object.keys(before.body.workspaces[0]).sort(), ["name", "root", "source", "workspace_id"]);
   const read = await call("read_host_file", { path: configPath });
   const invalid = await call("write_host_text_file", { path: configPath,
     content: JSON.stringify([{ id: "bad", root: "relative" }]), expected_sha256: read.body.sha256 });
   assert.equal(invalid.error, true);
   assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), initial);
-  const changed = await call("write_host_text_file", { path: configPath,
+  const legacyField = await call("write_host_text_file", { path: configPath,
     content: JSON.stringify([{ id: "project", root: project, allow_write: true }]),
+    expected_sha256: read.body.sha256 });
+  assert.equal(legacyField.error, true);
+  assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), initial);
+  const changed = await call("write_host_text_file", { path: configPath,
+    content: JSON.stringify([{ id: "renamed-project", root: project }]),
     expected_sha256: read.body.sha256 });
   assert.equal(changed.error, false);
   const reload = await call("reload_workspace_config");
   assert.equal(reload.error, false);
-  assert.equal(reload.body.workspaces[0].allow_write, true);
-  assert.equal((await call("list_workspaces")).body.workspaces[0].allow_write, true);
+  assert.equal(reload.body.workspaces[0].workspace_id, "renamed-project");
+  assert.equal((await call("list_workspaces")).body.workspaces[0].workspace_id, "renamed-project");
   const capabilities = await call("host_capabilities");
   assert.equal(capabilities.body.commands_enabled, false);
   assert.equal(capabilities.body.commands_are_os_sandboxed, false);

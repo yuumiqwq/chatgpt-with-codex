@@ -14,17 +14,15 @@ import { RegisteredWorkspaceRegistry } from "./registered-workspace-registry.js"
 export type Canonicalizer = (path: string) => Promise<string>;
 export type { GitStarter };
 
-export interface BindWorkspaceResult {
+interface BindWorkspaceResult {
   readonly workspace_id: string;
   readonly root: string;
-  readonly allow_write: boolean;
   readonly source: "manual" | "managed";
 }
 
-export interface CreateWorkspaceResult {
+interface CreateWorkspaceResult {
   readonly workspace_id: string;
   readonly root: string;
-  readonly allow_write: boolean;
   readonly git: { readonly initialized: true; readonly head: "unborn" };
 }
 
@@ -46,13 +44,12 @@ export class WorkspaceOnboardingService {
       return {
         workspace_id: existing.id,
         root: existing.root,
-        allow_write: existing.allowWrite,
         source: existing.source
       };
     }
     const { id } = await this.catalog.registerOnce(canonical);
     this.registry.registerManaged(id, canonical);
-    return { workspace_id: id, root: canonical, allow_write: false, source: "managed" };
+    return { workspace_id: id, root: canonical, source: "managed" };
   }
 
   async create(request: { parent: string; name: string }): Promise<CreateWorkspaceResult> {
@@ -77,22 +74,8 @@ export class WorkspaceOnboardingService {
     return {
       workspace_id: id,
       root: target,
-      allow_write: false,
       git: { initialized: true, head: "unborn" }
     };
-  }
-
-  async authorizeWrite(workspaceId: string): Promise<{ workspace_id: string; allow_write: true }> {
-    const root = this.registry.resolve(workspaceId);
-    if (this.registry.sourceOf(workspaceId) !== "managed") {
-      // Manual workspaces stay authoritative through workspaces.json only.
-      throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
-    }
-    // Persist first, then update the runtime registry: a failed persist leaves
-    // no half-authorized runtime state, and the registry update cannot fail.
-    await this.catalog.authorize(root);
-    this.registry.authorizeWrite(workspaceId);
-    return { workspace_id: workspaceId, allow_write: true };
   }
 
   private async canonicalizeWithinApprovedRoot(path: string): Promise<string> {

@@ -18,6 +18,7 @@ import { registerHostTools } from "../../../src/host/host-tools.js";
 import { RegisteredWorkspaceRegistry } from "../../../src/workspaces/registered-workspace-registry.js";
 
 const THREAD_ID = "550e8400-e29b-41d4-a716-446655440000";
+const ARCHIVED_THREAD_ID = "650e8400-e29b-41d4-a716-446655440001";
 const digest = (content: string | Buffer) => createHash("sha256").update(content).digest("hex");
 const hostCode = (code: string) => (error: unknown) => error instanceof HostError && error.code === code;
 
@@ -209,6 +210,34 @@ test("native session lookup verifies the header UUID and original allowed cwd", 
   } }) + "\n");
   await assert.rejects(locateCodexSession(f.policy, THREAD_ID), hostCode("HOST_PATH_DENIED"));
   await assert.rejects(locateCodexSession(f.policy, "invalid"), hostCode("CODEX_THREAD_NOT_FOUND"));
+});
+
+test("native session lookup accepts top-level Codex history junctions without relaxing host file policy", async t => {
+  const f = await fixture(t);
+  const storage = join(f.outside, "native-sessions"), archivedStorage = join(f.outside, "native-archived-sessions");
+  const dated = join(storage, "2026", "09", "12"), archivedDated = join(archivedStorage, "2026", "09", "11");
+  await Promise.all([mkdir(dated, { recursive: true }), mkdir(archivedDated, { recursive: true })]);
+  const linkedRoot = join(f.codexHome, "sessions");
+  const archivedLinkedRoot = join(f.codexHome, "archived_sessions");
+  const linkType = process.platform === "win32" ? "junction" : "dir";
+  await Promise.all([symlink(storage, linkedRoot, linkType), symlink(archivedStorage, archivedLinkedRoot, linkType)]);
+  const path = join(dated, "rollout-" + THREAD_ID + ".jsonl");
+  const archivedPath = join(archivedDated, "rollout-" + ARCHIVED_THREAD_ID + ".jsonl");
+  await Promise.all([
+    writeFile(path, JSON.stringify({ type: "session_meta", payload: { id: THREAD_ID, cwd: f.allowed } }) + "\n"),
+    writeFile(archivedPath, JSON.stringify({ type: "session_meta", payload: {
+      id: ARCHIVED_THREAD_ID, cwd: f.allowed
+    } }) + "\n")
+  ]);
+
+  assert.deepEqual(await locateCodexSession(f.policy, THREAD_ID), {
+    threadId: THREAD_ID, cwd: f.allowed, codexHome: f.codexHome, rolloutPath: path
+  });
+  assert.deepEqual(await locateCodexSession(f.policy, ARCHIVED_THREAD_ID), {
+    threadId: ARCHIVED_THREAD_ID, cwd: f.allowed, codexHome: f.codexHome, rolloutPath: archivedPath
+  });
+  await assert.rejects(f.files.read(join(linkedRoot, "2026", "09", "12", "rollout-" + THREAD_ID + ".jsonl")),
+    hostCode("HOST_PATH_DENIED"));
 });
 
 

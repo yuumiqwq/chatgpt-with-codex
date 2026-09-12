@@ -3,23 +3,20 @@ import { basename, isAbsolute, normalize } from "node:path";
 
 import { CoreError } from "../core/errors.js";
 
-export interface WorkspaceRegistration {
+interface WorkspaceRegistration {
   readonly id: string;
   readonly root: string;
-  readonly allow_write?: boolean | undefined;
 }
 
-export interface WorkspaceLookup {
+interface WorkspaceLookup {
   readonly id: string;
   readonly root: string;
-  readonly allowWrite: boolean;
   readonly source: "manual" | "managed";
 }
 
 type Registration = {
   root: string;
   canonicalRoot: string;
-  allowWrite: boolean;
   source: "manual" | "managed";
 };
 
@@ -36,7 +33,6 @@ export class RegisteredWorkspaceRegistry {
     for (const entry of entries) {
       if (typeof entry.id !== "string" || entry.id.length === 0 ||
           typeof entry.root !== "string" || entry.root.length === 0 ||
-          (entry.allow_write !== undefined && typeof entry.allow_write !== "boolean") ||
           !isAbsolute(entry.root) || normalize(entry.root) !== entry.root ||
           this.registrations.has(entry.id)) {
         throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
@@ -45,7 +41,6 @@ export class RegisteredWorkspaceRegistry {
       this.registrations.set(entry.id, {
         root: entry.root,
         canonicalRoot,
-        allowWrite: entry.allow_write ?? false,
         source: "manual"
       });
       // Duplicate canonical roots among manual entries do not fail startup;
@@ -75,24 +70,10 @@ export class RegisteredWorkspaceRegistry {
       workspace_id: id,
       name: basename(entry.root),
       root: entry.root,
-      allow_write: entry.allowWrite,
       source: entry.source
     })).filter(entry => !needle || [entry.name, entry.root, entry.workspace_id]
       .some(value => value.normalize("NFKC").toLowerCase().includes(needle)))
       .sort((a, b) => a.root.localeCompare(b.root));
-  }
-
-  resolveExecution(workspaceId: string): { root: string; allowWrite: boolean } {
-    const registration = this.registrations.get(workspaceId);
-    if (registration === undefined) throw new CoreError("UNKNOWN_WORKSPACE");
-    return { root: registration.root, allowWrite: registration.allowWrite };
-  }
-
-  resolveWritable(workspaceId: string): string {
-    const registration = this.registrations.get(workspaceId);
-    if (registration === undefined) throw new CoreError("UNKNOWN_WORKSPACE");
-    if (!registration.allowWrite) throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
-    return registration.root;
   }
 
   findByRoot(canonicalRoot: string): WorkspaceLookup | undefined {
@@ -103,12 +84,11 @@ export class RegisteredWorkspaceRegistry {
     return {
       id,
       root: registration.root,
-      allowWrite: registration.allowWrite,
       source: registration.source
     };
   }
 
-  registerManaged(id: string, root: string, allowWrite = false): void {
+  registerManaged(id: string, root: string): void {
     const existing = this.registrations.get(id);
     if (existing !== undefined) {
       if (existing.root === root) return;
@@ -116,23 +96,8 @@ export class RegisteredWorkspaceRegistry {
     }
     const canonicalRoot = this.canonicalize(root);
     if (this.canonicalRoots.has(canonicalRoot)) throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
-    this.registrations.set(id, { root, canonicalRoot, allowWrite, source: "managed" });
+    this.registrations.set(id, { root, canonicalRoot, source: "managed" });
     this.canonicalRoots.set(canonicalRoot, id);
-  }
-
-  sourceOf(workspaceId: string): "manual" | "managed" {
-    const registration = this.registrations.get(workspaceId);
-    if (registration === undefined) throw new CoreError("UNKNOWN_WORKSPACE");
-    return registration.source;
-  }
-
-  // Grants controlled-write authorization for one managed workspace. Manual
-  // workspaces stay authoritative through workspaces.json only. Idempotent.
-  authorizeWrite(workspaceId: string): void {
-    const registration = this.registrations.get(workspaceId);
-    if (registration === undefined) throw new CoreError("UNKNOWN_WORKSPACE");
-    if (registration.source !== "managed") throw new CoreError("WORKSPACE_PRECONDITION_FAILED");
-    registration.allowWrite = true;
   }
 }
 

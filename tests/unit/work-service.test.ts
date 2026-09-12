@@ -15,7 +15,7 @@ async function fixture(t: { after(fn: () => void): void }, execute?: (r: Executo
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const policy = await HostPolicy.create({ version: 1, enabled: true, read_roots: [root],
     write_roots: [root], codex_homes: [root] }, join(root, "policy.json"));
-  const registry = new RegisteredWorkspaceRegistry([{ id: "project", root, allow_write: true }]);
+  const registry = new RegisteredWorkspaceRegistry([{ id: "project", root }]);
   const requests: ExecutorRequest[] = [];
   const executors: ExecutorName[] = [];
   const nativeCalls: string[] = [];

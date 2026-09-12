@@ -111,7 +111,7 @@ test("MCP run_temp passes DSH access to its child and persists the same result m
   // launcher; native DSH policy enforcement is tested separately.
   writeFileSync(join(launcherDir, "bin.js"), "console.log(JSON.stringify({mode:process.env.DSH_PERMISSION_MODE,args:process.argv.slice(2)}));\n");
   const config = join(dir, "workspaces.json");
-  writeFileSync(config, JSON.stringify([{ id: "project", root: dir, allow_write: true }]));
+  writeFileSync(config, JSON.stringify([{ id: "project", root: dir }]));
   const client = new Client({ name: "dsh-access-test", version: "1" });
   await client.connect(new StdioClientTransport({ command: process.execPath,
     args: [join(process.cwd(), "dist/src/mcp-stdio.js"), config], stderr: "pipe",
@@ -173,7 +173,7 @@ test("bind_project and create_project register workspaces inside approved projec
   try {
     await client.connect(transport);
 
-    // Binding an existing manual workspace returns its real allow_write and source.
+    // Binding an existing manual workspace returns identity metadata only.
     const manualBind = await call("bind_project", {
       project_path: manualProject
     });
@@ -181,20 +181,22 @@ test("bind_project and create_project register workspaces inside approved projec
     assert.deepEqual(manualBind.body, {
       workspace_id: "manual",
       root: manualProject,
-      allow_write: true,
       source: "manual"
     });
+    const migratedManualConfig = JSON.parse(readFileSync(configPath, "utf8")) as Array<Record<string, unknown>>;
+    assert.equal("allow_write" in migratedManualConfig[1]!, false);
+    assert.deepEqual(migratedManualConfig[0], { kind: "project_root", root: approved });
 
     // Binding a new project creates a managed workspace and reuses its id.
     const firstBind = await call("bind_project", {
       project_path: otherProject
     });
     assert.equal(firstBind.isError, false);
-    const firstBody = firstBind.body as { workspace_id?: unknown; root?: unknown; allow_write?: unknown; source?: unknown };
+    const firstBody = firstBind.body as { workspace_id?: unknown; root?: unknown; source?: unknown };
     assert.equal(typeof firstBody.workspace_id, "string");
     assert.equal(firstBody.root, realpathSync(otherProject));
-    assert.equal(firstBody.allow_write, false);
     assert.equal(firstBody.source, "managed");
+    assert.deepEqual(Object.keys(firstBody).sort(), ["root", "source", "workspace_id"]);
 
     const secondBind = await call("bind_project", {
       project_path: otherProject
@@ -216,11 +218,11 @@ test("bind_project and create_project register workspaces inside approved projec
       name: "created-project"
     });
     assert.equal(created.isError, false);
-    const createdBody = created.body as { workspace_id?: unknown; root?: unknown; allow_write?: unknown; git?: unknown };
+    const createdBody = created.body as { workspace_id?: unknown; root?: unknown; git?: unknown };
     assert.equal(typeof createdBody.workspace_id, "string");
     assert.equal(createdBody.root, realpathSync(join(approved, "created-project")));
-    assert.equal(createdBody.allow_write, false);
     assert.deepEqual(createdBody.git, { initialized: true, head: "unborn" });
+    assert.deepEqual(Object.keys(createdBody).sort(), ["git", "root", "workspace_id"]);
     assert.equal(readFileSync(join(approved, "created-project", ".git", "HEAD"), "utf8").includes("ref:"), true);
 
     // Missing project name is rejected by the schema without side effects.

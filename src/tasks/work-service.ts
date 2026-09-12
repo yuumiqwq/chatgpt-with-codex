@@ -199,7 +199,7 @@ export class WorkService {
       this.refresh();
       const existing = [...this.works.values()].find(item => item.thread_id === options.thread_id);
       if (existing) return this.view(existing);
-    } else if (options.workspace_id) cwd = this.registry.resolveExecution(options.workspace_id).root;
+    } else if (options.workspace_id) cwd = this.registry.resolve(options.workspace_id);
     if (!cwd) problem("WORK_PROJECT_REQUIRED", "Supply workspace_id or an absolute cwd when creating a work.");
     if (!options.thread_id && !options.workspace_id) cwd = await this.policy.check(cwd, "read");
     const created = now();
@@ -239,7 +239,7 @@ export class WorkService {
     const executor = options.executor ?? "codex";
     if (executor === "dsh" && (options.model || options.reasoning_effort)) throw new CoreError("UNSUPPORTED_ACTION");
     let cwd = work?.cwd;
-    if (options.workspace_id) cwd = this.registry.resolveExecution(options.workspace_id).root;
+    if (options.workspace_id) cwd = this.registry.resolve(options.workspace_id);
     else if (options.cwd) cwd = await this.policy.check(options.cwd, "read");
     if (!cwd) problem("WORK_PROJECT_REQUIRED", "Supply work_id, workspace_id or cwd for temporary execution.");
     const access = options.access ?? "danger-full-access";

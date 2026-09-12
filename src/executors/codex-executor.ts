@@ -19,7 +19,7 @@ import {
 const MAX_EVIDENCE = 50;
 const MAX_TEXT = 16_384;
 const MAX_EVIDENCE_BYTES = 65_536;
-// Bound wire messages separately from the smaller supervisor evidence budget.
+// Bound wire messages separately from the smaller caller-facing evidence budget.
 // Large agent messages may contain a complete patch; never truncate that patch.
 const MAX_JSONL_LINE_BYTES = 1_048_576;
 const DEFAULT_RPC_CALL_TIMEOUT_MS = 30_000;
@@ -160,7 +160,7 @@ export class CodexExecutor implements Executor {
       finish(result);
     };
     const unavailable = (): void => stop(failure("CODEX_UNAVAILABLE"));
-    // The evidence view a supervisor receives. Real evidence and the synthetic
+    // The evidence view a caller receives. Real evidence and the synthetic
     // evidence-drop marker together never exceed MAX_EVIDENCE: the marker only
     // appears once real entries were evicted, and the eviction loop above
     // reserves its slot within the same budget. Rebuilt from a single counter,
@@ -312,7 +312,7 @@ export class CodexExecutor implements Executor {
               const changes = rawChanges.slice(0, kept).filter(object).map((c) => ({ path: bounded(c.path), diff: bounded(c.diff) }));
               if (rawChanges.length > 50) {
                 // omitted counts exactly the real changes that were never
-                // returned to the supervisor.
+                // returned to the caller.
                 changes.push({ path: `[truncated: ${rawChanges.length - kept} additional changes omitted]`, diff: "" });
               }
               entry = { id, type: item.type, status, changes };

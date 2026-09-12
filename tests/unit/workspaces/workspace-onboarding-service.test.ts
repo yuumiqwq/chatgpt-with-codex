@@ -50,10 +50,6 @@ async function expectCode(action: () => Promise<unknown>, code: string): Promise
   await assert.rejects(action, (error: unknown) => error instanceof CoreError && error.code === code);
 }
 
-function expectCodeSync(action: () => unknown, code: string): void {
-  assert.throws(action, (error: unknown) => error instanceof CoreError && error.code === code);
-}
-
 function setup(): {
   approved: string;
   catalogPath: string;
@@ -99,7 +95,6 @@ test("bind registers an existing directory inside an approved root and persists 
 
   assert.equal(isId(result.workspace_id), true);
   assert.equal(result.root, realpathSync(project));
-  assert.equal(result.allow_write, false);
   assert.equal(result.source, "managed");
   assert.equal(registry.resolve(result.workspace_id), realpathSync(project));
   assert.deepEqual(gitInvocations, []);
@@ -107,18 +102,18 @@ test("bind registers an existing directory inside an approved root and persists 
   // Cross-restart persistence: a fresh catalog + registry resolves the same id.
   const reloadedCatalog = new ManagedWorkspaceCatalog(catalogPath);
   await reloadedCatalog.load();
-  assert.deepEqual(reloadedCatalog.entries(), [{ id: result.workspace_id, root: realpathSync(project), allowWrite: false }]);
+  assert.deepEqual(reloadedCatalog.entries(), [{ id: result.workspace_id, root: realpathSync(project) }]);
   const reloadedRegistry = new RegisteredWorkspaceRegistry([]);
   for (const entry of reloadedCatalog.entries()) reloadedRegistry.registerManaged(entry.id, entry.root);
   assert.equal(reloadedRegistry.resolve(result.workspace_id), realpathSync(project));
 });
 
-test("bind reuses an existing manual workspace with its real allow_write and source", async () => {
+test("bind reuses an existing manual workspace identity and source", async () => {
   const { approved, catalog, gitInvocations } = setup();
   const project = join(approved, "manual-proj");
   mkdirSync(project);
   const manualRegistry = new RegisteredWorkspaceRegistry([
-    { id: "manual", root: realpathSync(project), allow_write: true }
+    { id: "manual", root: realpathSync(project) }
   ]);
   const onboarding = service(manualRegistry, catalog, [approved], gitInvocations);
 
@@ -127,7 +122,6 @@ test("bind reuses an existing manual workspace with its real allow_write and sou
   assert.deepEqual(result, {
     workspace_id: "manual",
     root: realpathSync(project),
-    allow_write: true,
     source: "manual"
   });
   assert.deepEqual(catalog.entries(), []);
@@ -143,7 +137,6 @@ test("repeated and concurrent binds of the same canonical root converge on one m
   const second = await onboarding.bind({ project_path: project });
   assert.equal(first.workspace_id, second.workspace_id);
   assert.equal(second.source, "managed");
-  assert.equal(second.allow_write, false);
 
   const [third, fourth] = await Promise.all([
     onboarding.bind({ project_path: project }),
@@ -160,7 +153,7 @@ test("bind rejects paths outside approved roots, prefix siblings, and symlink es
   mkdirSync(join(outside, "target"));
   const sibling = `${approved}-sibling`;
   mkdirSync(join(sibling, "inner"), { recursive: true });
-  symlinkSync(join(outside, "target"), join(approved, "link"));
+  symlinkSync(join(outside, "target"), join(approved, "link"), process.platform === "win32" ? "junction" : "dir");
   const onboarding = service(registry, catalog, [approved], gitInvocations);
 
   await expectCode(() => onboarding.bind({ project_path: join(outside, "target") }), "WORKSPACE_BOUNDARY_VIOLATION");
@@ -195,7 +188,7 @@ test("a failing approved root does not disable healthy roots; all-failed or non-
   await expectCode(() => allBad.bind({ project_path: project }), "WORKSPACE_BOUNDARY_VIOLATION");
 
   // Only the successful bind left a record behind.
-  assert.deepEqual(catalog.entries(), [{ id: result.workspace_id, root: realpathSync(project), allowWrite: false }]);
+  assert.deepEqual(catalog.entries(), [{ id: result.workspace_id, root: realpathSync(project) }]);
 });
 
 test("bind rejects nonexistent paths, non-directories, and missing approved roots", async () => {
@@ -222,7 +215,6 @@ test("create makes the directory, runs git init only, registers, and reports unb
   assert.equal(isId(result.workspace_id), true);
   const expectedRoot = join(realpathSync(approved), "newproj");
   assert.equal(result.root, expectedRoot);
-  assert.equal(result.allow_write, false);
   assert.deepEqual(result.git, { initialized: true, head: "unborn" });
   assert.equal(statSync(expectedRoot).isDirectory(), true);
   assert.equal(registry.resolve(result.workspace_id), expectedRoot);
@@ -232,7 +224,7 @@ test("create makes the directory, runs git init only, registers, and reports unb
   assert.deepEqual(gitInvocations[0]?.args, ["init"]);
   assert.equal(gitInvocations[0]?.options.cwd, expectedRoot);
 
-  assert.deepEqual(catalog.entries(), [{ id: result.workspace_id, root: expectedRoot, allowWrite: false }]);
+  assert.deepEqual(catalog.entries(), [{ id: result.workspace_id, root: expectedRoot }]);
 });
 
 test("create rejects invalid names, outside parents, missing parents, and existing targets", async () => {
@@ -290,75 +282,5 @@ test("create with a catalog persist failure keeps the target, registers nothing,
   const recovered = await onboarding.bind({ project_path: target });
   assert.equal(isId(recovered.workspace_id), true);
   assert.equal(recovered.source, "managed");
-  assert.equal(recovered.allow_write, false);
   assert.equal(registry.resolve(recovered.workspace_id), target);
-});
-
-test("authorizeWrite persists controlled-write and enables resolveWritable after restart", async () => {
-  const { approved, registry, catalog, gitInvocations } = setup();
-  const project = join(approved, "auth-proj");
-  mkdirSync(project);
-  await catalog.load();
-  const onboarding = service(registry, catalog, [approved], gitInvocations);
-  const { workspace_id } = await onboarding.bind({ project_path: project });
-  expectCodeSync(() => registry.resolveWritable(workspace_id), "WORKSPACE_PRECONDITION_FAILED");
-
-  const authorized = await onboarding.authorizeWrite(workspace_id);
-  assert.deepEqual(authorized, { workspace_id, allow_write: true });
-  assert.equal(registry.resolveWritable(workspace_id), realpathSync(project));
-
-  // Restart recovery: a fresh catalog + registry restores the authorization.
-  const reloadedCatalog = new ManagedWorkspaceCatalog(catalogStateFilePath(catalog));
-  await reloadedCatalog.load();
-  assert.equal(reloadedCatalog.entries()[0]?.allowWrite, true);
-  const reloadedRegistry = new RegisteredWorkspaceRegistry([]);
-  for (const entry of reloadedCatalog.entries()) {
-    reloadedRegistry.registerManaged(entry.id, entry.root, entry.allowWrite);
-  }
-  assert.equal(reloadedRegistry.resolveWritable(workspace_id), realpathSync(project));
-});
-
-test("authorizeWrite is idempotent and persists once", async () => {
-  const { approved, registry, catalog, gitInvocations } = setup();
-  const project = join(approved, "idem-proj");
-  mkdirSync(project);
-  await catalog.load();
-  const onboarding = service(registry, catalog, [approved], gitInvocations);
-  const { workspace_id } = await onboarding.bind({ project_path: project });
-
-  await onboarding.authorizeWrite(workspace_id);
-  await onboarding.authorizeWrite(workspace_id);
-  assert.deepEqual(catalog.entries(), [{ id: workspace_id, root: realpathSync(project), allowWrite: true }]);
-});
-
-test("authorizeWrite rejects manual workspaces without touching the catalog", async () => {
-  const { approved, registry, catalog, gitInvocations } = setup();
-  const project = join(approved, "manual-auth");
-  mkdirSync(project);
-  const manualRegistry = new RegisteredWorkspaceRegistry([
-    { id: "manual", root: realpathSync(project), allow_write: true }
-  ]);
-  const onboarding = service(manualRegistry, catalog, [approved], gitInvocations);
-
-  await expectCode(() => onboarding.authorizeWrite("manual"), "WORKSPACE_PRECONDITION_FAILED");
-  await expectCode(() => onboarding.authorizeWrite("missing"), "UNKNOWN_WORKSPACE");
-  assert.deepEqual(catalog.entries(), []);
-});
-
-test("authorizeWrite with a persist failure leaves runtime and catalog unauthorized", async () => {
-  const { approved, registry, catalog, gitInvocations } = setup();
-  const project = join(approved, "fail-auth");
-  mkdirSync(project);
-  await catalog.load();
-  const onboarding = service(registry, catalog, [approved], gitInvocations);
-  const { workspace_id } = await onboarding.bind({ project_path: project });
-
-  // Block the catalog path so the authorize persist fails.
-  rmSync(catalogStateFilePath(catalog));
-  mkdirSync(catalogStateFilePath(catalog));
-  await expectCode(() => onboarding.authorizeWrite(workspace_id), "INTERNAL_ERROR");
-
-  // No half state: runtime is not authorized and the catalog record stays read-only.
-  expectCodeSync(() => registry.resolveWritable(workspace_id), "WORKSPACE_PRECONDITION_FAILED");
-  assert.equal(catalog.entries()[0]?.allowWrite, false);
 });

@@ -1,4 +1,4 @@
-import { lstat, open, readdir, stat } from "node:fs/promises";
+import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { absolutePath, checkAncestors, HostError, HostPolicy } from "./host-policy.js";
@@ -17,7 +17,22 @@ export async function locateCodexSession(policy: HostPolicy, threadId: string) {
   for (const codexHome of policy.config.codex_homes) {
     if (!policy.config.follow_links) await checkAncestors(codexHome);
     for (const directory of ["sessions", "archived_sessions"]) {
-      const pending = [{ path: join(codexHome, directory), depth: 0 }];
+      const configuredRoot = join(codexHome, directory);
+      let historyRoot = configuredRoot;
+      try {
+        if (!policy.config.follow_links && (await lstat(configuredRoot)).isSymbolicLink()) {
+          // Codex supports relocating its two native history trees through a
+          // top-level link. Resolve only that administrator-configured storage
+          // boundary; links encountered below it remain excluded from scans.
+          historyRoot = await realpath(configuredRoot);
+          await checkAncestors(historyRoot);
+          if (!(await lstat(historyRoot)).isDirectory()) continue;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      const pending = [{ path: historyRoot, depth: 0 }];
       while (pending.length) {
         const current = pending.pop()!;
         let entries;

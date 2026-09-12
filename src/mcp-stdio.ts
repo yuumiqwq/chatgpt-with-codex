@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
+import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -23,8 +23,7 @@ import { WorkspaceOnboardingService } from "./workspaces/workspace-onboarding-se
 
 const WorkspaceEntrySchema = z.object({
   id: z.string().min(1),
-  root: z.string().min(1),
-  allow_write: z.boolean().optional()
+  root: z.string().min(1)
 }).strict();
 
 const ProjectRootEntrySchema = z.object({
@@ -41,15 +40,41 @@ function isProjectRootEntry(entry: WorkspaceEntry | ProjectRootEntry): entry is 
   return "kind" in entry;
 }
 
-function parseWorkspaceConfig(source: string) {
-  const entries = WorkspaceConfigSchema.parse(JSON.parse(source.replace(/^\uFEFF/u, "")));
+function parseWorkspaceConfig(source: string, acceptLegacy = false) {
+  const value: unknown = JSON.parse(source.replace(/^\uFEFF/u, ""));
+  let migrated = false;
+  const normalized = acceptLegacy && Array.isArray(value) ? value.map((item) => {
+    if (!isObject(item) || item.kind !== undefined || !("allow_write" in item)) return item;
+    if (typeof item.allow_write !== "boolean") throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
+    const { allow_write: _legacyAuthorization, ...identity } = item;
+    migrated = true;
+    return identity;
+  }) : value;
+  const entries = WorkspaceConfigSchema.parse(normalized);
   new RegisteredWorkspaceRegistry(entries.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry)));
   for (const entry of entries.filter(isProjectRootEntry)) {
     if (!isAbsolute(entry.root) || normalize(entry.root) !== entry.root) {
       throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
     }
   }
-  return entries;
+  return { entries, migrated };
+}
+
+async function loadWorkspaceConfig(configPath: string) {
+  const parsed = parseWorkspaceConfig(await readFile(configPath, "utf8"), true);
+  if (parsed.migrated) {
+    const temporaryPath = `${configPath}.${process.pid}.${Date.now()}.migration.tmp`;
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(parsed.entries, null, 2)}\n`, {
+        encoding: "utf8", flag: "wx", mode: 0o600
+      });
+      await rename(temporaryPath, configPath);
+    } catch {
+      await unlink(temporaryPath).catch((): void => {});
+      throw new CoreError("INTERNAL_ERROR");
+    }
+  }
+  return parsed.entries;
 }
 
 function jsonContent(value: unknown) {
@@ -72,8 +97,7 @@ async function main(): Promise<void> {
 
   const configPath = process.argv[2];
   if (configPath === undefined) throw new Error("Workspace configuration path is required.");
-  const configSource = await readFile(configPath, "utf8");
-  const parsed = parseWorkspaceConfig(configSource);
+  const parsed = await loadWorkspaceConfig(configPath);
   const workspaceEntries = parsed.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry));
   const projectRootEntries = parsed.filter(isProjectRootEntry);
   for (const entry of projectRootEntries) {
@@ -88,7 +112,7 @@ async function main(): Promise<void> {
   await catalog.load();
   for (const entry of catalog.entries()) {
     try {
-      registry.registerManaged(entry.id, entry.root, entry.allowWrite);
+      registry.registerManaged(entry.id, entry.root);
     } catch {
       // A manual or earlier managed registration already owns the id or root.
     }
@@ -128,7 +152,7 @@ async function main(): Promise<void> {
     },
     reloadWorkspaces: async () => {
       if (works.hasPendingTasks()) throw new HostError("HOST_TASKS_PENDING", "Finish pending executions before reloading workspaces.");
-      const entries = parseWorkspaceConfig(await readFile(configPath, "utf8"));
+      const entries = await loadWorkspaceConfig(configPath);
       const manual = entries.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry));
       const roots = entries.filter(isProjectRootEntry).map(entry => entry.root);
       for (const root of roots) {
@@ -136,7 +160,7 @@ async function main(): Promise<void> {
       }
       const next = new RegisteredWorkspaceRegistry(manual);
       for (const entry of catalog.entries()) {
-        if (!next.findByRoot(entry.root)) next.registerManaged(entry.id, entry.root, entry.allowWrite);
+        if (!next.findByRoot(entry.root)) next.registerManaged(entry.id, entry.root);
       }
       registry.replaceWith(next);
       onboarding = new WorkspaceOnboardingService(registry, catalog, roots);
@@ -204,3 +228,7 @@ main().catch((error: unknown) => {
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 });
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}

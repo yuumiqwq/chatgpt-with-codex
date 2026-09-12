@@ -9,7 +9,7 @@ This comparison is against the fork point, upstream v1.4.2 at [`ddabd94`](https:
 | Area | Upstream fork point | This fork |
 | --- | --- | --- |
 | Continuation | Native context supports supervised continuation; Bridge supervision state may be lost on restart | Persist work IDs, summaries and native UUIDs; unify create/reopen/adopt and resume the same history after restart |
-| Editing | Read-only executors prepare proposals; separate patch APIs require APPLY/COMMIT confirmation | Codex and DSH both support direct editing with the same access options and full access by default; legacy patch services are removed |
+| Editing | A separate proposal and application flow modifies projects | Codex and DSH work directly under per-execution access, with full access by default |
 | One-off execution | Task and patch APIs start executions | General run_temp selects Codex native ephemeral execution or DSH one-shot headless execution |
 | Discovery | Registered workspace IDs are the principal entry point | Find workspaces and native Codex history by project, then adopt an existing task |
 | Completion and retention | Supervision, review and acceptance manage each run | Distinguish run completion from goal completion; retain summaries and expose archive/retention settings |
@@ -25,7 +25,7 @@ Use wait_task repeatedly while ready is false; each call waits at most 45 second
 
 Codex and DSH both accept read-only and danger-full-access. run_temp defaults to danger-full-access for either executor and honors access on each call. Full access permits file changes and commands using the current OS account's privileges. Codex receives native sandbox configuration; DSH receives DSH_PERMISSION_MODE in each child process. See [security behavior](SECURITY.md) for the enforcement boundaries.
 
-DSH remains a one-shot headless executor without a resumable Codex UUID and does not accept the Codex-only model and reasoning_effort options. There are no public workspace-write inputs, supervisor acceptance steps, literal confirmation fields or separate controlled-patch services.
+A workspace stores project identity, root and source, while project_root entries bound which projects can be registered. Executor write access comes from the access input on open_work, continue_work and run_temp. Bridge file and command tools use the separate host policy. DSH remains a one-shot headless executor without a resumable Codex UUID and does not accept the Codex-only model and reasoning_effort options.
 
 ## Run locally
 

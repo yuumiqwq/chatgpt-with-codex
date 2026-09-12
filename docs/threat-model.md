@@ -15,7 +15,7 @@ The tested Windows provider reports enforcement=partial. Its [native implementat
 
 Access settings apply to executor tool operations, not to Bridge's own result/log persistence or the executor's own runtime data. Stopping a full-access execution does not undo changes already made.
 
-There is no workspace-write input, mandatory review/accept step or controlled-patch engine. Instructions explain use and consequences; Bridge does not classify natural-language goals or enforce immutable formal/auxiliary categories. Successful process execution does not prove goal completion: finish_work records the caller's decision.
+Workspace registration identifies a project and limits onboarding through `project_root`; it does not authorize writes. Bridge-owned file and command tools are governed separately by host-policy `read_roots`, `write_roots`, `command_roots` and command settings. Successful process execution does not prove goal completion: finish_work records the caller's decision.
 
 Optional host file tools retain configured roots, size bounds and SHA-256 replacement checks. Enabled host commands are not OS-sandboxed by their starting directory. Their maximum duration is 45 seconds and output is bounded. File policies do not restrict a separate full-access model execution.
 

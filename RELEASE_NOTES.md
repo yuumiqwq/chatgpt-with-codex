@@ -1,10 +1,14 @@
-## Unreleased
+## 1.7.0-local.2
 
 - Give Codex and DSH the same `run_temp` access choices: `read-only` and `danger-full-access`, with full access the default for both. Preserve the selected access in run metadata and results.
 - Pass DSH access through its existing per-process `DSH_PERMISSION_MODE` integration, overriding inherited permission settings for each invocation. Retain DSH's one-shot headless lifecycle and reject Codex-only model options.
 - Keep Codex native sandbox behavior and durable-history semantics unchanged. Current permission boundaries are documented in [security behavior](SECURITY.md) and [work management](docs/work-management.md).
+- Make workspace records identity-only across manual configuration, runtime discovery, onboarding results and managed persistence. Execution write access remains a per-work setting, and host operations remain governed by the separate host policy.
+- Migrate manual configuration and managed catalog v1 records once while preserving every valid workspace ID, root and project-root boundary. New managed catalogs use schema version 2.
+- Remove the remaining unused workspace authorization methods and error codes, refresh current documentation, and place superseded design plans under an explicitly historical archive.
+- Allow durable Codex continuation to resolve the two top-level native history links under a configured Codex home. Links inside those history trees and all links used through host file tools remain rejected when `follow_links` is false.
 
-Validation on Windows: typecheck and build pass. The focused Codex/DSH executor, WorkService and MCP suite has 127 tests: 126 pass and one is skipped. The full suite has 227 tests: 209 pass, 17 fail and one is skipped. All 17 failing test names also fail at the pre-change HEAD `854b163`; they concern POSIX paths in catalog/registry tests and Windows symlink permissions. Two existing executor tests now explicitly select the POSIX platform they model, reducing the baseline's 19 failures without changing runtime behavior.
+Validation on Windows: typecheck and build pass. The full suite has 211 tests: 210 pass and one platform-specific test is skipped. Release metadata and a real MCP smoke expose 24 tools, accept only `read-only` and `danger-full-access`, preserve six workspace identities, and complete a native temporary execution.
 
 Native DSH 0.1.2-rc.1 checks without a model session verified read-only filesystem denial inside/outside the workspace and command-write denial through the Windows runner, plus successful full-access writes. The native Windows provider reports partial enforcement, and DSH read-only does not disable network; see [security behavior](SECURITY.md) for scope and sources.
 

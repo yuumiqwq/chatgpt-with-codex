@@ -1,22 +1,22 @@
 # Contributing
 
-Engineering Bridge is a stable local supervised bridge (V1; current release v1.2.1). Narrowly scoped fixes, documentation improvements, and tests are welcome when they preserve the current nine-tool MCP surface — `run_task`, `task_result`, `control_task`, `bind_project`, `create_project`, `authorize_workspace_write`, `generate_controlled_patch`, `refine_controlled_patch`, and `apply_controlled_patch` — and its supervision boundaries. Keep the tool surface minimal: a new tool must justify a real user capability need and a clear security boundary; the tool count is not fixed forever, but every addition must stay within the local supervised-bridge model and prefer the smallest sufficient change (YAGNI). Ordinary/supervisor execution (Codex and DSH) and proposal generation must remain read-only, with dangerous writes explicit and behind reviewed confirmation. Interactive turns use state-checked continue/steer/interrupt/accept, while completed patch proposals are polled through `task_result`, reviewed outside task state, and passed directly to `apply_controlled_patch` with exact `APPLY`; they must never enter supervisor review or be accepted through `control_task`. Controlled application must remain disabled by default, limited to existing tracked regular text files and absent 100644 ordinary text-file additions (including unborn repositories), and must never automatically run tests, stage, commit, or push. Active task/thread/evidence/review supervision state remains process-local with no automatic timeout, while the managed workspace catalog and controlled-patch retained state persist across restarts; `workspace_id` stays required, managed onboarding is confined to configured `project_root` approved roots through exact `BIND`/`CREATE`, and controlled-write authorization for managed workspaces goes through exact `AUTHORIZE`. Preserve backward compatibility for existing call shapes and defaults.
+Engineering Bridge is a local MCP bridge for durable Codex work, temporary Codex or DSH execution, project discovery and optional host operations. Keep changes focused on the current interfaces in [docs/tools.md](docs/tools.md), and include migration coverage whenever a persisted schema changes.
 
-Keep changes focused and include tests when behavior changes. Do not add machine-specific paths, credentials, secrets, or private integration details to source, fixtures, examples, documentation, commits, or issue reports.
+Workspace configuration defines project identity and registration boundaries. A manual workspace contains `id` and `root`; a `project_root` entry limits paths accepted by `bind_project` and `create_project`. Per-execution write access belongs to `open_work`, `continue_work` and `run_temp`. Bridge file and command operations belong to the adjacent host policy. Do not combine these independent boundaries.
 
-## Debugging slow or stalled tasks
+Keep machine-specific paths, credentials, secrets and private runtime sidecars out of source, fixtures, documentation, commits and issue reports. Existing work records and managed workspace IDs must survive compatible migrations.
 
-Bridge invokes Codex via `codex app-server --stdio`. When debugging a slow or stalled task, inspect more than Bridge controlled-patch state and tunnel logs: also inspect `~/.codex/sessions/YYYY/MM/DD/*.jsonl`, which contains structured timestamps, types, and events, and optionally `~/.codex/logs_2.sqlite` if it actually contains rows. Running `generate_controlled_patch` and `refine_controlled_patch` tasks do not expose executor evidence like ordinary `run_task`, so `running` with no evidence must not be interpreted as a handshake or startup stall.
+## Debugging execution
 
-Correlate the Bridge `task_id` with the Codex thread/session ID when available. Compare session-start, tool-result, final-message, and session-end timestamps before attributing latency to RPC, turn execution, terminal handling, persistence, or outer orchestration. If phase timing is insufficient, report that the evidence is insufficient rather than guessing. Future observability should persist bounded Bridge `task_id` ↔ Codex thread/session mappings and phase timestamps without sensitive body logging or unbounded growth.
+Bridge invokes Codex through `codex app-server --stdio`. For a slow or stalled task, correlate the Bridge `task_id` with the Codex thread or session ID when available, then compare session-start, tool-result, final-message and session-end timestamps. Local session JSONL files and a populated Codex log database can provide evidence, but avoid logging sensitive request bodies or allowing diagnostics to grow without a bound.
 
 Run the standard checks before submitting a change:
 
 ```sh
-npm install
+npm ci
 npm run typecheck
 npm run build
 npm test
 ```
 
-Describe what changed, why it is within the existing boundary, and which checks you ran. Security-sensitive reports should follow [SECURITY.md](SECURITY.md).
+Describe the behavior change, migration path and validation performed. Security-sensitive reports should follow [SECURITY.md](SECURITY.md).

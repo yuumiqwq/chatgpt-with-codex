@@ -6,6 +6,8 @@ This fork's current interface is version 1.7. The model chooses the work, declar
 
 Use `list_work` to find an existing work by project, name or summary. Project names are labels and may repeat; the stored work ID is the identity.
 
+Workspace records identify projects through `workspace_id`, name, root and manual/managed source. They do not carry execution or host write permission. `project_root` remains the boundary used by project onboarding.
+
 `open_work` handles creation, reopening and native-history adoption:
 
 - Supply `work_id` to reopen the same record, including completed work.
@@ -14,7 +16,7 @@ Use `list_work` to find an existing work by project, name or summary. Project na
 
 `continue_work` starts a turn. The first execution creates and names a native thread. Later executions reuse its UUID and original history. Each execution gets a separate Bridge `task_id` for waiting and results. Existing archived history is unarchived when reopened.
 
-Default access is `danger-full-access`, with no additional Codex approval prompt. It permits filesystem, Git-metadata and network operations using the current OS account. The caller can select `read-only` for an individual work/turn that must not edit files; Codex disables network in this mode. There is no workspace-write input option. Existing work records using it normalize to full access; historical results retain their original reported access. Stopping an execution does not roll back its edits.
+Default access is `danger-full-access`, with no additional Codex approval prompt. It permits filesystem, Git-metadata and network operations using the current OS account. The caller can select `read-only` for an individual work or turn that must not edit files; Codex disables network in this mode. Historical work records are normalized during load. Stopping an execution does not roll back its edits.
 
 Bridge checks concurrent execution only within its own process. Reading a conversation in another client is compatible with this flow, but simultaneous execution by another Codex client is not reliably detected.
 
@@ -30,15 +32,13 @@ DSH uses its official one-shot headless command with `DSH_PERMISSION_MODE` set t
 
 Temporary execution has no resumable UUID. Use `continue_work` for ongoing Codex context. A DSH invocation does not produce a fabricated Codex UUID and does not accept Codex-only `model` or `reasoning_effort` options; DSH's own local runtime data is outside native Codex history retention.
 
-All editing, validation and Git operations use `continue_work` or `run_temp`. A read-only temporary turn can still return a proposed diff as text, but there is no separate patch application service.
-
-Removed public APIs include `run_task`, `resume_codex_thread`, `generate_controlled_patch`, `refine_controlled_patch`, `authorize_workspace_write`, `submit_controlled_patch`, `apply_controlled_patch`, `commit_controlled_patch`, `configure_validation_profile` and `validate_controlled_patch`. The patch engine and its supervisor service are deleted. Existing private patch/validation sidecars can be read as historical files and do not gate startup or execute through old task IDs. Public tools require no literal confirmation tokens.
+Editing, validation and Git operations use `continue_work` or `run_temp`. A read-only temporary turn can still return a proposed diff as text. Retired private sidecars remain historical files and are not loaded as current tasks.
 
 ## Waiting and completion
 
 `wait_task` waits up to 45 seconds per call. A timeout returns current status; when `ready=false`, the caller should issue another wait. Cancelling a wait leaves the execution running. These mechanics do not guarantee that ChatGPT itself will continue making calls after ending its response.
 
-`control_task` offers `steer` and `interrupt`. Successful new executions directly become `completed` and expose `output`; no separate acceptance gate is required. `task_result` reads retained executions in the work registry; old patch IDs are not current task IDs.
+`control_task` offers `steer` and `interrupt`. Successful new executions directly become `completed` and expose `output`. `task_result` reads retained executions in the work registry.
 
 Execution completion and goal completion are different facts. `finish_work` records the caller's completion decision with a summary and references. `open_work` can subsequently reopen it.
 
@@ -74,9 +74,9 @@ Use null to disable an age rule. Changing result limits prunes matching results 
 
 Move the effective configuration and its sidecar state together with the built source. Update project roots, tunnel launchers, Codex's local MCP configuration and scheduled startup actions. Preserve the current tunnel identity and credentials.
 
-Moving workspace directories does not move the Codex profile. Native history indexes contain original paths. Windows directory junctions can preserve these paths, but **sessions and archived_sessions must remain on the same physical volume**: the native archive operation uses rename and fails across drives. Migrating selected date folders alone is therefore unsuitable. `follow_links: true` supports a complete same-volume history layout; canonical destination roots must still match configured file roots.
+Moving workspace directories does not move the Codex profile. Native history indexes contain original paths. Windows directory junctions can preserve these paths, but **sessions and archived_sessions must resolve to the same physical volume**: the native archive operation uses rename and fails across drives. Migrating selected date folders alone is therefore unsuitable.
 
-Move both history trees together after all Codex writers exit, verify every file and preserve their original paths through junctions. Do not replace a live history folder with a stale copied snapshot. Authentication and the live profile database need not move with workspace files. The installed profile's partial history migration was rolled back and verified after a real archive operation exposed the cross-volume limitation; no C-drive space saving from that attempt is claimed.
+Move both history trees together after all Codex writers exit, verify every file and preserve their original paths through junctions. With `follow_links: false`, Bridge resolves only the exact top-level `sessions` and `archived_sessions` links for native history discovery; nested history links and host file operations through links remain denied. Do not replace a live history folder with a stale copied snapshot. Authentication and the live profile database need not move with workspace files.
 
 After replacing public tools, refresh Engineering Bridge in ChatGPT's app/developer connection settings. Existing conversations can retain stale tool metadata; a fresh conversation after refresh loads the new surface. This is distinct from restarting the local runtime.
 
