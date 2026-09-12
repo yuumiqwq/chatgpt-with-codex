@@ -92,16 +92,14 @@ function retainTail(current: Buffer, chunk: Buffer): Buffer {
   return Buffer.concat([current.subarray(current.length - keepFromCurrent), chunk], keepFromCurrent + chunk.length);
 }
 
-function environment(host: Readonly<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
+function environment(host: Readonly<NodeJS.ProcessEnv>, sandbox: ExecutorRequest["sandbox"]): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   for (const key of ENVIRONMENT_ALLOWLIST) if (host[key]) result[key] = host[key];
-  // Bridge owns the read-only boundary for its run_task calls. The host value
-  // is never forwarded (the allowlist drops it) and this constant override pins
-  // DSH's per-invocation sandbox policy (`sandboxPolicy.mode` reads
-  // `process.env.DSH_PERMISSION_MODE ?? 'workspace-write'`) to read-only for
-  // this child process only. Global DSH config and the headless profile are
-  // untouched.
-  result.DSH_PERMISSION_MODE = "read-only";
+  // DSH's base profile reads DSH_PERMISSION_MODE into sandboxPolicy.mode and
+  // selects approval=never for danger-full-access. Set the request's policy for
+  // this child only; the allowlist excludes host overrides. Match Codex's
+  // read-only default without changing global DSH config or the headless profile.
+  result.DSH_PERMISSION_MODE = sandbox ?? "read-only";
   return result;
 }
 
@@ -186,7 +184,7 @@ export class DshExecutor implements Executor {
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
         detached: this.platform !== "win32",
-        env: environment(this.hostEnvironment)
+        env: environment(this.hostEnvironment, request.sandbox)
       });
     } catch {
       return failure("DSH_UNAVAILABLE");

@@ -90,13 +90,50 @@ test("temporary execution validates executor options before dispatch",async t=>{
     args:[join(process.cwd(),"dist/src/mcp-stdio.js"),config],stderr:"pipe"}));
   try {
     for(const executor of [undefined,"codex","dsh"]){
-      const result=await client.callTool({name:"run_temp",arguments:{workspace_id:"missing",instruction:"inspect",...(executor?{executor}:{})}});
-      assert.equal(result.isError,true);assert.match(JSON.stringify(result),/UNKNOWN_WORKSPACE/);
+      for (const access of [undefined,"read-only","danger-full-access"]) {
+        const result=await client.callTool({name:"run_temp",arguments:{workspace_id:"missing",instruction:"inspect",...(executor?{executor}:{}),...(access?{access}:{})}});
+        assert.equal(result.isError,true);assert.match(JSON.stringify(result),/UNKNOWN_WORKSPACE/);
+      }
+      assert.equal((await client.callTool({name:"run_temp",arguments:{workspace_id:"missing",instruction:"inspect",...(executor?{executor}:{}),access:"workspace-write"}})).isError,true);
     }
     const unsupported=await client.callTool({name:"run_temp",arguments:{workspace_id:"missing",instruction:"inspect",executor:"dsh",model:"any"}});
     assert.match(JSON.stringify(unsupported),/UNSUPPORTED_ACTION/);
     assert.equal((await client.callTool({name:"run_temp",arguments:{workspace_id:"missing",instruction:"inspect",executor:"unknown"}})).isError,true);
   }finally{await client.close();}
+});
+
+test("MCP run_temp passes DSH access to its child and persists the same result metadata", async t => {
+  const dir = mkdtempSync(join(tmpdir(), "bridge-dsh-access-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const launcherDir = join(dir, "profiles", "node_modules", "@deepseek-ai", "dsh", "lib");
+  mkdirSync(launcherDir, { recursive: true });
+  // This transport fixture reports what the real executor passes to a DSH
+  // launcher; native DSH policy enforcement is tested separately.
+  writeFileSync(join(launcherDir, "bin.js"), "console.log(JSON.stringify({mode:process.env.DSH_PERMISSION_MODE,args:process.argv.slice(2)}));\n");
+  const config = join(dir, "workspaces.json");
+  writeFileSync(config, JSON.stringify([{ id: "project", root: dir, allow_write: true }]));
+  const client = new Client({ name: "dsh-access-test", version: "1" });
+  await client.connect(new StdioClientTransport({ command: process.execPath,
+    args: [join(process.cwd(), "dist/src/mcp-stdio.js"), config], stderr: "pipe",
+    env: { PATH: "", DSH_HOME: dir, DSH_PERMISSION_MODE: "workspace-write" } }));
+  try {
+    for (const access of [undefined, "read-only", "danger-full-access"] as const) {
+      const expected = access ?? "danger-full-access";
+      const started = await client.callTool({ name: "run_temp", arguments: {
+        workspace_id: "project", instruction: "report invocation", executor: "dsh", ...(access ? { access } : {}) } });
+      assert.notEqual(started.isError, true);
+      const run = JSON.parse((started.content as ToolResult["content"])[0]!.text!);
+      assert.equal(run.access, expected);
+      const completed = await client.callTool({ name: "wait_task", arguments: { task_id: run.task_id } });
+      assert.notEqual(completed.isError, true);
+      const result = JSON.parse((completed.content as ToolResult["content"])[0]!.text!);
+      assert.equal(result.state, "completed");
+      assert.equal(result.access, expected);
+      assert.equal(result.executor, "dsh");
+      assert.deepEqual(JSON.parse(result.output), { mode: expected, args: ["--profile", "headless", "report invocation"] });
+      assert.equal(JSON.parse(readFileSync(run.result_file, "utf8")).access, expected);
+    }
+  } finally { await client.close(); }
 });
 
 test("bind_project and create_project register workspaces inside approved project roots", async () => {

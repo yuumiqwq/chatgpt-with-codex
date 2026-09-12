@@ -1,6 +1,6 @@
 # Engineering Bridge
 
-这个 fork 通过 MCP 让 ChatGPT 操作本地 Codex 或 DSH。1.7 版为持续工作复用原生任务历史，一次性执行使用不保存原生历史的临时模式；启用主机工具时共有 24 个接口，未启用时为 14 个。
+这个 fork 通过 MCP 让 ChatGPT 操作本地 Codex 或 DSH。1.7 版为持续工作复用 Codex 原生任务历史，一次性执行可选 Codex 临时模式或 DSH headless；启用主机工具时共有 24 个接口，未启用时为 14 个。
 
 ## 与原仓库相比
 
@@ -9,8 +9,8 @@
 | 方面 | 原仓库的分叉基线 | 本 fork 当前实现 |
 | --- | --- | --- |
 | 工作延续 | 原生上下文支持监督式继续，Bridge 的监督状态可在重启后丢失 | 保存工作编号、摘要和原生 UUID；统一创建、重新打开与接管，重启后可继续同一份历史 |
-| 文件修改 | 执行器只读生成提案，通过独立补丁接口及 APPLY/COMMIT 确认写入和提交 | Codex 默认直接修改文件、操作 Git 和联网；保留显式只读选项，移除旧补丁支线 |
-| 一次性执行 | 通过任务或补丁接口发起执行 | 通用 run_temp 使用原生临时模式，不保存可继续的 Codex 对话 |
+| 文件修改 | 执行器只读生成提案，通过独立补丁接口及 APPLY/COMMIT 确认写入和提交 | Codex 与 DSH 均可直接修改文件，使用相同的 access 选项且默认完全访问；移除旧补丁支线 |
+| 一次性执行 | 通过任务或补丁接口发起执行 | 通用 run_temp 可选 Codex 或 DSH；Codex 使用原生临时模式，DSH 使用一次性 headless 执行 |
 | 项目与历史查找 | 主要依赖已登记的工作区编号 | 按项目查找工作区和本地 Codex 历史，可接管已有任务 |
 | 完成与留存 | 以监督、审阅和接受结果的流程管理每轮执行 | 区分执行结束和目标完成；提供工作摘要、归档及可配置的保留期限 |
 | 主机操作 | 以已登记项目中的任务和补丁为主要入口 | 可额外启用文件与命令工具，以及工作区配置重载；这些能力由本机配置决定 |
@@ -23,7 +23,9 @@
 
 wait_task 每次最多等待 45 秒，ready 为 false 时继续调用；取消等待不会停止执行。finish_work 保存调用方判断的目标完成状态，manage_work 与 work_retention 管理归档及保留期限。默认保存最近 100 份终态执行结果，不自动按天删除历史。
 
-Codex 默认使用 danger-full-access，可以按当前系统账户权限修改文件、联网和完成 Git 提交推送。需要明确限制为分析时可选 read-only，DSH 始终只读。公开接口已移除 workspace-write，也没有独立的受控补丁支线、结果接受步骤或固定确认文字。
+Codex 与 DSH 均支持 read-only 和 danger-full-access；run_temp 对两者都默认使用 danger-full-access，并按每次调用的 access 选择权限。完全访问允许执行器按当前系统账户权限修改文件及执行命令；Codex 通过原生沙箱配置接收权限，DSH 通过每次进程的 DSH_PERMISSION_MODE 接收权限，具体限制见[安全说明](SECURITY.md)。
+
+DSH 继续使用一次性 headless 接口，不返回可续接的 Codex UUID，也不接受 Codex 专用的 model 和 reasoning_effort。公开接口已移除 workspace-write，没有独立的受控补丁支线、结果接受步骤或固定确认文字。
 
 Windows 下，Bridge 直接启动的 Git、DSH、Codex 和主机命令进程均设置为隐藏控制台窗口，输出仍通过工具结果返回；执行器内部主动打开的窗口不在此保证范围内。
 

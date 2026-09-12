@@ -14,7 +14,7 @@ Use `list_work` to find an existing work by project, name or summary. Project na
 
 `continue_work` starts a turn. The first execution creates and names a native thread. Later executions reuse its UUID and original history. Each execution gets a separate Bridge `task_id` for waiting and results. Existing archived history is unarchived when reopened.
 
-Default access is `danger-full-access`, with no additional Codex approval prompt. It permits filesystem, Git-metadata and network operations using the current OS account. The caller can select `read-only` for an individual work/turn that must not edit files; that mode disables network. There is no workspace-write input option. Existing work records using it normalize to full access; historical results retain their original reported access. Stopping an execution does not roll back its edits. DSH remains a read-only, one-shot headless executor.
+Default access is `danger-full-access`, with no additional Codex approval prompt. It permits filesystem, Git-metadata and network operations using the current OS account. The caller can select `read-only` for an individual work/turn that must not edit files; Codex disables network in this mode. There is no workspace-write input option. Existing work records using it normalize to full access; historical results retain their original reported access. Stopping an execution does not roll back its edits.
 
 Bridge checks concurrent execution only within its own process. Reading a conversation in another client is compatible with this flow, but simultaneous execution by another Codex client is not reliably detected.
 
@@ -22,9 +22,13 @@ Bridge checks concurrent execution only within its own process. Reading a conver
 
 `run_temp` accepts a general instruction for any one-off use. An optional `work_id` associates the result with a work, without including or replacing that work's native history. It can inspect a repository, draft a patch, or modify project files according to its access setting.
 
+Both `executor: "codex"` and `executor: "dsh"` accept `access: "read-only"` or `access: "danger-full-access"`. Omitting executor selects Codex, and omitting access selects full access for either executor, including calls associated with a read-only work. Supply access explicitly when the temporary run must be read-only; this per-call setting does not change the associated work's stored access.
+
 Codex uses `thread/start` with `ephemeral: true` inside the existing app-server executor. It does not persist a native rollout. This has been tested with the installed native CLI. It still consumes resources while running, and Bridge persists its final result separately. Durable artifacts belong in the project; include artifact paths and commits in the work's summary/references.
 
-Temporary execution has no resumable UUID. Use `continue_work` for ongoing context. A DSH invocation does not produce a fabricated Codex UUID; DSH's own local runtime data is outside native Codex history retention.
+DSH uses its official one-shot headless command with `DSH_PERMISSION_MODE` set to the requested access in each child process. Its filesystem permission policy receives `read-only` or `danger-full-access`; Bridge does not depend on the parent process's permission setting. Executor-specific enforcement is described in [security behavior](security.md).
+
+Temporary execution has no resumable UUID. Use `continue_work` for ongoing Codex context. A DSH invocation does not produce a fabricated Codex UUID and does not accept Codex-only `model` or `reasoning_effort` options; DSH's own local runtime data is outside native Codex history retention.
 
 All editing, validation and Git operations use `continue_work` or `run_temp`. A read-only temporary turn can still return a proposed diff as text, but there is no separate patch application service.
 

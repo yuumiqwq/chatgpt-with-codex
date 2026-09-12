@@ -242,7 +242,7 @@ export class WorkService {
     if (options.workspace_id) cwd = this.registry.resolveExecution(options.workspace_id).root;
     else if (options.cwd) cwd = await this.policy.check(options.cwd, "read");
     if (!cwd) problem("WORK_PROJECT_REQUIRED", "Supply work_id, workspace_id or cwd for temporary execution.");
-    const access = executor === "dsh" ? "read-only" : options.access ?? "danger-full-access";
+    const access = options.access ?? "danger-full-access";
     const run = this.start(cwd, work?.codex_home ?? this.policy.config.codex_homes[0] ?? process.env.CODEX_HOME ?? "",
       options, access, executor, true, work);
     return { task_id: run.task_id, work_id: work?.work_id ?? null, ephemeral: true, access,

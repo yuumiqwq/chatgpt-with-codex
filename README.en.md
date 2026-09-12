@@ -1,6 +1,6 @@
 # Engineering Bridge
 
-This fork connects ChatGPT to local Codex and DSH through MCP. Version 1.7 uses durable work for ongoing tasks and ephemeral execution for one-off instructions. It exposes 24 tools with host operations enabled, or 14 without them.
+This fork connects ChatGPT to local Codex and DSH through MCP. Version 1.7 uses durable Codex work for ongoing tasks, with Codex ephemeral execution or DSH headless execution for one-off instructions. It exposes 24 tools with host operations enabled, or 14 without them.
 
 ## Changes from upstream
 
@@ -9,8 +9,8 @@ This comparison is against the fork point, upstream v1.4.2 at [`ddabd94`](https:
 | Area | Upstream fork point | This fork |
 | --- | --- | --- |
 | Continuation | Native context supports supervised continuation; Bridge supervision state may be lost on restart | Persist work IDs, summaries and native UUIDs; unify create/reopen/adopt and resume the same history after restart |
-| Editing | Read-only executors prepare proposals; separate patch APIs require APPLY/COMMIT confirmation | Codex defaults to direct file, Git and network access; explicit read-only remains, and legacy patch services are removed |
-| One-off execution | Task and patch APIs start executions | General run_temp uses native ephemeral mode without saving a resumable Codex conversation |
+| Editing | Read-only executors prepare proposals; separate patch APIs require APPLY/COMMIT confirmation | Codex and DSH both support direct editing with the same access options and full access by default; legacy patch services are removed |
+| One-off execution | Task and patch APIs start executions | General run_temp selects Codex native ephemeral execution or DSH one-shot headless execution |
 | Discovery | Registered workspace IDs are the principal entry point | Find workspaces and native Codex history by project, then adopt an existing task |
 | Completion and retention | Supervision, review and acceptance manage each run | Distinguish run completion from goal completion; retain summaries and expose archive/retention settings |
 | Host operations | Registered-project tasks and patches are the main entry points | Optional file/command tools and workspace configuration reload, enabled by local configuration |
@@ -23,7 +23,9 @@ Find the project with list_workspaces or list_codex_projects. Use list_work to f
 
 Use wait_task repeatedly while ready is false; each call waits at most 45 seconds and cancelling the wait does not stop execution. finish_work records the caller's decision that the goal is complete. manage_work and work_retention control archive and retention. By default Bridge retains 100 terminal execution results and enables no age-based history deletion.
 
-Codex defaults to danger-full-access, using the current OS account's filesystem and network rights, including Git commit/push. read-only is the sole restricted option. DSH always runs read-only. There are no public workspace-write inputs, supervisor acceptance steps, literal confirmation fields or separate controlled-patch services.
+Codex and DSH both accept read-only and danger-full-access. run_temp defaults to danger-full-access for either executor and honors access on each call. Full access permits file changes and commands using the current OS account's privileges. Codex receives native sandbox configuration; DSH receives DSH_PERMISSION_MODE in each child process. See [security behavior](SECURITY.md) for the enforcement boundaries.
+
+DSH remains a one-shot headless executor without a resumable Codex UUID and does not accept the Codex-only model and reasoning_effort options. There are no public workspace-write inputs, supervisor acceptance steps, literal confirmation fields or separate controlled-patch services.
 
 ## Run locally
 

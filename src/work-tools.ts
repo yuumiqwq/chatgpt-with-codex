@@ -6,7 +6,8 @@ import { WorkService } from "./tasks/work-service.js";
 
 export function registerWorkTools(server: McpServer, works: WorkService) {
   const id = z.string().uuid(), text = z.string().min(1);
-  const access = z.enum(["read-only", "danger-full-access"]);
+  const access = z.enum(["read-only", "danger-full-access"])
+    .describe("Per-execution access for Codex and DSH: read-only or danger-full-access. New work and run_temp default to danger-full-access; continue_work inherits the work setting unless overridden.");
   const turn = { instruction: text.max(200_000), model: text.optional(),
     reasoning_effort: text.optional(), access: access.optional() };
   const safe = async (operation: () => unknown) => {
@@ -32,7 +33,7 @@ export function registerWorkTools(server: McpServer, works: WorkService) {
     inputSchema: { work_id: id, ...turn }
   }, ({ work_id, ...args }) => safe(() => works.continue(work_id, args)));
   server.registerTool("run_temp", {
-    description: "Run any one-off instruction, including inspection or patch drafting, without persisting a native Codex conversation. Supply work_id, workspace_id or cwd. Optional work association does not reuse its history. Codex uses ephemeral app-server mode; DSH uses its read-only headless executor. Saves the result separately under the registry's .results directory, subject to retention. Save lasting artifacts in the project and reference them in finish_work. wait_task cancellation does not stop execution.",
+    description: "Run any one-off instruction, including inspection or file editing, without persisting a native Codex conversation. Supply work_id, workspace_id or cwd. Optional work association does not reuse its history or access setting. Codex uses ephemeral app-server mode; DSH uses its headless executor. Both accept read-only or danger-full-access, defaulting to danger-full-access with OS account privileges and no extra approval prompt. Access is passed to the selected executor's native permission policy. Saves the result separately under the registry's .results directory, subject to retention. Save lasting artifacts in the project and reference them in finish_work. wait_task cancellation does not stop execution.",
     inputSchema: { work_id: id.optional(), workspace_id: text.optional(), cwd: text.optional(),
       executor: z.enum(["codex", "dsh"]).default("codex"), ...turn }
   }, args => safe(() => works.temp(args)));

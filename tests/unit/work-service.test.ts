@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { WorkService } from "../../src/tasks/work-service.js";
 import { RegisteredWorkspaceRegistry } from "../../src/workspaces/registered-workspace-registry.js";
 import { HostPolicy } from "../../src/host/host-policy.js";
-import type { ExecutorFactory } from "../../src/tasks/execution-types.js";
+import type { ExecutorFactory, ExecutorName } from "../../src/tasks/execution-types.js";
 import type { ExecutorRequest, ExecutorResult } from "../../src/executors/executor.js";
 
 async function fixture(t: { after(fn: () => void): void }, execute?: (r: ExecutorRequest) => Promise<ExecutorResult>) {
@@ -17,8 +17,10 @@ async function fixture(t: { after(fn: () => void): void }, execute?: (r: Executo
     write_roots: [root], codex_homes: [root] }, join(root, "policy.json"));
   const registry = new RegisteredWorkspaceRegistry([{ id: "project", root, allow_write: true }]);
   const requests: ExecutorRequest[] = [];
+  const executors: ExecutorName[] = [];
   const nativeCalls: string[] = [];
-  const factory: ExecutorFactory = () => ({ execute: async request => {
+  const factory: ExecutorFactory = executor => ({ execute: async request => {
+    executors.push(executor);
     requests.push(request);
     if (execute) return execute(request);
     const threadId = request.threadId ?? randomUUID();
@@ -30,7 +32,7 @@ async function fixture(t: { after(fn: () => void): void }, execute?: (r: Executo
     nativeCalls.push(method); return {};
   }, async (_policy, threadId) => ({ threadId, cwd: root, codexHome: root, rolloutPath: join(root, threadId + ".jsonl") }));
   const service = create();
-  return { root, path, requests, nativeCalls, service, create };
+  return { root, path, requests, executors, nativeCalls, service, create };
 }
 
 test("lazy work creation, project lookup and paginated duplicate names", async t => {
@@ -81,6 +83,64 @@ test("temporary execution persists only its result, never replaces parent histor
   assert.equal(f.service.taskView(run.task_id)?.threadId,undefined);
   assert.equal(f.service.list().works[0]?.thread_id,work.thread_id);
   assert.equal(JSON.parse(readFileSync(f.path,"utf8")).runs[0].thread_id,undefined);
+});
+
+for (const executor of ["codex", "dsh"] as const) {
+  for (const access of [undefined, "read-only", "danger-full-access"] as const) {
+    for (const selector of ["workspace_id", "cwd", "work_id"] as const) {
+      test(`${executor} temporary ${access ?? "default"} access via ${selector} is executed and retained`, async t => {
+        let complete!: (result: ExecutorResult) => void;
+        const f = await fixture(t, () => new Promise(resolve => { complete = resolve; }));
+        const expected = access ?? "danger-full-access";
+        const parentAccess = expected === "read-only" ? "danger-full-access" : "read-only";
+        const parent = selector === "work_id"
+          ? await f.service.open({ thread_id: randomUUID(), access: parentAccess }) : undefined;
+        const target = selector === "work_id" ? { work_id: parent!.work_id }
+          : selector === "workspace_id" ? { workspace_id: "project" } : { cwd: f.root };
+        const run = await f.service.temp({ ...target, executor, instruction: "inspect or edit", ...(access ? { access } : {}) });
+        assert.equal(run.access, expected);
+        assert.equal(f.service.taskView(run.task_id)?.access, expected);
+        assert.equal(f.service.taskView(run.task_id)?.state, "running");
+        assert.deepEqual(f.executors, [executor]);
+        assert.equal(f.requests[0]?.sandbox, expected);
+        assert.equal(f.requests[0]?.ephemeral, true);
+        assert.equal(f.requests[0]?.threadId, undefined);
+        complete({ kind: "completed", output: "finished" });
+        const result = await f.service.waitTask(run.task_id);
+        assert.equal(result?.state, "completed");
+        assert.equal(result?.access, expected);
+        assert.equal(result?.executor, executor);
+        const stored = JSON.parse(readFileSync(run.result_file, "utf8"));
+        assert.equal(stored.access, expected);
+        assert.equal(stored.executor, executor);
+        const restored = f.create(); restored.load();
+        assert.equal(restored.taskView(run.task_id)?.access, expected);
+        assert.equal(restored.taskView(run.task_id)?.threadId, undefined);
+        assert.equal(JSON.parse(readFileSync(f.path, "utf8")).runs[0].access, expected);
+        if (parent) {
+          assert.equal(restored.list().works[0]?.access, parentAccess);
+          assert.equal(restored.list().works[0]?.thread_id, parent.thread_id);
+          assert.equal(restored.list().works[0]?.last_run?.access, expected);
+        }
+      });
+    }
+  }
+}
+
+test("durable Codex work inherits and updates access across restart", async t => {
+  const f = await fixture(t);
+  const work = await f.service.open({ workspace_id: "project", access: "read-only" });
+  const first = await f.service.continue(work.work_id, { instruction: "inspect" });
+  await f.service.waitTask(first.task_id);
+  assert.equal(f.requests[0]?.sandbox, "read-only");
+  const second = await f.service.continue(work.work_id, { instruction: "edit", access: "danger-full-access" });
+  await f.service.waitTask(second.task_id);
+  const restored = f.create(); restored.load();
+  const third = await restored.continue(work.work_id, { instruction: "finish editing" });
+  await restored.waitTask(third.task_id);
+  assert.deepEqual(f.requests.map(request => request.sandbox), ["read-only", "danger-full-access", "danger-full-access"]);
+  assert.deepEqual(f.executors, ["codex", "codex", "codex"]);
+  assert.equal(restored.list().works[0]?.access, "danger-full-access");
 });
 
 test("own overlapping turns and finish while running are rejected; wait abort does not stop execution", async t => {

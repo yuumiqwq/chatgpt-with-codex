@@ -7,7 +7,7 @@ Version 1.7 replaces one-conversation-per-call execution with durable work and n
 | list_work | query, workspace_id/cwd, status, archived, offset/limit; find durable work IDs. |
 | open_work | work_id, thread_id, or workspace_id/cwd + name; create, reopen or adopt. Optional access. |
 | continue_work | work_id + instruction; optional model, reasoning_effort, access. |
-| run_temp | work_id/workspace_id/cwd + instruction; optional executor, model, reasoning_effort, access. |
+| run_temp | work_id/workspace_id/cwd + instruction; optional executor codex/dsh and access read-only/danger-full-access. model and reasoning_effort are Codex-only. |
 | finish_work | work_id + summary; optional references. Caller-declared goal completion. |
 | manage_work | work_id + archive/unarchive/delete_history/forget. Native deletion includes descendants. |
 | work_retention | Optional result count/age and archive/delete age rules; optional sweep. |
@@ -29,10 +29,10 @@ Version 1.7 replaces one-conversation-per-call execution with durable work and n
 | run_host_command | absolute executable + args + cwd; timeout_seconds 1–45. |
 | reload_workspace_config | Validate/reload when no executions are pending. |
 
-There are 24 tools with optional host operations enabled, 14 without them. Host files retain their configured roots and content hash checks; enabled host commands and full-access Codex executions use OS account privileges. No public tool requires a literal confirmation token.
+There are 24 tools with optional host operations enabled, 14 without them. Host files retain their configured roots and content hash checks; enabled host commands and full-access Codex or DSH executions use OS account privileges. No public tool requires a literal confirmation token.
 
 Removed execution APIs: run_task, resume_codex_thread, generate_controlled_patch and refine_controlled_patch. Version 1.7 also removes authorize_workspace_write, submit_controlled_patch, apply_controlled_patch, commit_controlled_patch, configure_validation_profile, validate_controlled_patch. The old patch and validation engines are deleted; their private sidecar files remain ordinary historical data, not executable records. All changes and Git operations use continue_work or run_temp.
 
-Access accepts read-only or danger-full-access, with full access the default. Existing work records with workspace-write are normalized to full access on load; old result records retain the access that was actually used.
+Access accepts read-only or danger-full-access for Codex and DSH, with full access the default. run_temp applies its own per-call access selection even when associated with a work_id; omitting access does not inherit that work's stored mode. continue_work uses the stored work access unless overridden. Existing work records with workspace-write are normalized to full access on load; old result records retain the access that was actually used. See [security behavior](security.md) for each executor's permission mechanism.
 
 New successful executions return state completed, ready true and output. Failures expose structured errors; interrupted runs may expose genuine partial_output. Persistent runs carry thread_id; temporary and DSH runs do not. Executors retain the 15-minute deadline; Codex has a two-minute active-turn inactivity watchdog and 30-second RPC deadlines. Timeout of wait_task leaves execution running, so callers continue waiting when ready is false.

@@ -19,6 +19,8 @@ export interface ExecutorRequest {
   readonly threadName?: string;
   readonly taskId: Id;
   readonly instruction: string;
+  // Both executors honor this per invocation, defaulting to read-only when
+  // called directly. WorkService supplies its resolved access explicitly.
   readonly sandbox?: Exclude<SandboxMode, "workspace-write">;
   readonly model?: string;
   readonly reasoning_effort?: string;

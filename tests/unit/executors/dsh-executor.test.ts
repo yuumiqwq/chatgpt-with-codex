@@ -386,16 +386,39 @@ test("maps nonzero exit to an execution failure without exposing output or stder
   assert.equal(serialized.includes("/private/path"), false);
 });
 
-test("does not impose a sandbox policy before starting DSH", async () => {
-  const invocations: Invocation[] = [];
-  const result = await new DshExecutor(TRUSTED_CWD, fakeStarter({}, invocations), {})
-    .execute({ taskId: TASK_ID, instruction: "inspect", sandbox: "danger-full-access" });
+for (const platform of ["linux", "win32"] as const) {
+  for (const sandbox of ["read-only", "danger-full-access"] as const) {
+    test(`${platform}: passes requested ${sandbox} to the DSH policy despite an opposing host value`, async () => {
+      const invocations: Invocation[] = [];
+      const hostMode = sandbox === "read-only" ? "danger-full-access" : "read-only";
+      const hostEnvironment = { DSH_PERMISSION_MODE: hostMode };
+      const executor = new DshExecutor(TRUSTED_CWD, fakeStarter({}, invocations), hostEnvironment, platform);
 
-  assert.deepEqual(result, { kind: "completed", output: "final answer" });
-  assert.equal(invocations.length, 1);
-});
+      const result = await executor.execute({ taskId: TASK_ID, instruction: "inspect", sandbox });
 
-test("forwards only the sanctioned DSH variables and pins read-only, never host overrides or other secrets", async () => {
+      assert.deepEqual(result, { kind: "completed", output: "final answer" });
+      assert.equal(invocations.length, 1);
+      assert.equal(invocations[0]?.options.env?.DSH_PERMISSION_MODE, sandbox);
+      assert.deepEqual(invocations[0]?.args, ["--profile", "headless", "inspect"]);
+      assert.equal(hostEnvironment.DSH_PERMISSION_MODE, hostMode);
+    });
+  }
+
+  test(`${platform}: defaults to read-only like Codex regardless of the host permission mode`, async () => {
+    for (const hostMode of [undefined, "read-only", "workspace-write", "danger-full-access"]) {
+      const invocations: Invocation[] = [];
+      const hostEnvironment = hostMode === undefined ? {} : { DSH_PERMISSION_MODE: hostMode };
+      const executor = new DshExecutor(TRUSTED_CWD, fakeStarter({}, invocations), hostEnvironment, platform);
+
+      await executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+
+      assert.equal(invocations.length, 1);
+      assert.equal(invocations[0]?.options.env?.DSH_PERMISSION_MODE, "read-only");
+    }
+  });
+}
+
+test("forwards only the sanctioned DSH variables and applies the requested access without other secrets", async () => {
   const invocations: Invocation[] = [];
   const hostEnvironment = {
     PATH: "/test/bin",
@@ -411,13 +434,13 @@ test("forwards only the sanctioned DSH variables and pins read-only, never host 
   };
   const executor = new DshExecutor(TRUSTED_CWD, fakeStarter({}, invocations), hostEnvironment);
 
-  const result = await executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+  const result = await executor.execute({ taskId: TASK_ID, instruction: "inspect", sandbox: "danger-full-access" });
 
   assert.deepEqual(result, { kind: "completed", output: "final answer" });
   assert.equal(invocations.length, 1);
   const invocation = invocations[0];
   assert.ok(invocation);
-  assert.equal(invocation.options.env?.DSH_PERMISSION_MODE, "read-only");
+  assert.equal(invocation.options.env?.DSH_PERMISSION_MODE, "danger-full-access");
   assert.equal(invocation.options.env?.DEEPSEEK_API_KEY, "secret-api-key");
   assert.equal(invocation.options.env?.DSH_TOOLS_MODE, "full");
   assert.equal(invocation.options.env?.HTTP_PROXY, undefined);
@@ -428,7 +451,7 @@ test("forwards only the sanctioned DSH variables and pins read-only, never host 
   assert.deepEqual(invocation.args, ["--profile", "headless", "inspect"]);
 });
 
-test("a host requesting danger-full-access cannot override the read-only run_task", async () => {
+test("each execution receives its own access mode without retaining the previous request", async () => {
   const invocations: Invocation[] = [];
   const executor = new DshExecutor(TRUSTED_CWD, fakeStarter({}, invocations), {
     PATH: "/test/bin",
@@ -436,10 +459,12 @@ test("a host requesting danger-full-access cannot override the read-only run_tas
     DSH_PERMISSION_MODE: "danger-full-access"
   });
 
-  await executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+  await executor.execute({ taskId: TASK_ID, instruction: "write", sandbox: "danger-full-access" });
+  await executor.execute({ taskId: TASK_ID, instruction: "inspect", sandbox: "read-only" });
+  await executor.execute({ taskId: TASK_ID, instruction: "inspect by default" });
 
-  assert.equal(invocations.length, 1);
-  assert.equal(invocations[0]?.options.env?.DSH_PERMISSION_MODE, "read-only");
+  assert.deepEqual(invocations.map((invocation) => invocation.options.env?.DSH_PERMISSION_MODE),
+    ["danger-full-access", "read-only", "read-only"]);
 });
 
 test("treats exactly 1 MiB of output as within the cap", async () => {
@@ -702,6 +727,7 @@ test("win32: a real dsh.exe on PATH is spawned directly with the headless args",
   assert.deepEqual(invocation.args, ["--profile", "headless", instruction]);
   assert.equal(invocation.options.shell, false);
   assert.equal(invocation.options.windowsHide, true);
+  assert.equal(invocation.options.env?.DSH_PERMISSION_MODE, "read-only");
 });
 
 test("win32: an npm dsh.cmd shim resolves to its Node target, keeping the instruction a plain argv element", async () => {
@@ -713,10 +739,10 @@ test("win32: an npm dsh.cmd shim resolves to its Node target, keeping the instru
   const invocations: Invocation[] = [];
   const executor = new DshExecutor(TRUSTED_CWD,
     fakeStarter({ stdout: "final answer\n" }, invocations),
-    { PATH: dir }, "win32");
+    { PATH: dir, DSH_PERMISSION_MODE: "read-only" }, "win32");
   const instruction = "a&b|100%\"(x) 中文 测试";
 
-  await executor.execute({ taskId: TASK_ID, instruction, sandbox: "read-only" });
+  await executor.execute({ taskId: TASK_ID, instruction, sandbox: "danger-full-access" });
 
   const invocation = invocations[0];
   assert.ok(invocation);
@@ -724,6 +750,7 @@ test("win32: an npm dsh.cmd shim resolves to its Node target, keeping the instru
   assert.deepEqual(invocation.args, [binJs, "--profile", "headless", instruction]);
   assert.equal(invocation.options.shell, false);
   assert.equal(invocation.options.windowsHide, true);
+  assert.equal(invocation.options.env?.DSH_PERMISSION_MODE, "danger-full-access");
 });
 
 test("win32: a local node_modules/.bin dsh.cmd shim also resolves to its Node target", async () => {
@@ -792,7 +819,7 @@ test("POSIX: a Windows-style dsh layout on PATH does not change the original res
   const invocations: Invocation[] = [];
   const executor = new DshExecutor(TRUSTED_CWD,
     fakeStarter({ stdout: "final answer\n" }, invocations),
-    { PATH: dir }); // default platform is the running (non-Windows) one
+    { PATH: dir }, "linux");
 
   await executor.execute({ taskId: TASK_ID, instruction: "inspect", sandbox: "read-only" });
 

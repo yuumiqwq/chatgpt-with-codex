@@ -1,6 +1,6 @@
 # Current fork behavior
 
-Version 1.7 provides durable work, native ephemeral execution, project discovery and caller-managed retention. Model-driven changes use the executor directly; optional host tools can also edit files or run commands. The previous controlled-patch branch and public workspace-write mode have been removed. Full access is default, with explicit read-only execution available.
+Version 1.7 provides durable work, temporary execution, project discovery and caller-managed retention. Model-driven changes use the executor directly; optional host tools can also edit files or run commands. The previous controlled-patch branch and public workspace-write mode have been removed. Codex and DSH both support read-only and danger-full-access, with full access the default for temporary execution.
 
 ## Comparison baseline
 
@@ -9,9 +9,9 @@ The upstream comparison uses [wudy29/engineering-bridge at ddabd9486c6a997fc7332
 ## Added or changed behavior
 
 - **Persistent work:** `open_work` combines create/reopen/adopt; `continue_work` reuses native history. Work IDs, summaries and result references survive Bridge restarts. A running process is not automatically resumed after restart. See [work-service.ts](../src/tasks/work-service.ts).
-- **Temporary execution:** `run_temp` uses native ephemeral Codex execution for any one-off instruction. It does not save a resumable native conversation, but Bridge retains a bounded result and project artifacts remain. See [codex-executor.ts](../src/executors/codex-executor.ts).
+- **Temporary execution:** `run_temp` selects Codex native ephemeral execution or DSH one-shot headless execution for any one-off instruction. Neither returns a resumable native Codex UUID; Bridge retains a bounded result and project artifacts remain. See [codex-executor.ts](../src/executors/codex-executor.ts) and [dsh-executor.ts](../src/executors/dsh-executor.ts).
 - **Project discovery:** `list_workspaces` searches registered projects; `list_codex_projects` and `list_codex_threads` browse local native history before adoption. Names need not be unique and project history browsing is paginated. See [host tools](../src/host/host-tools.ts).
-- **Direct execution:** new Codex work defaults to full account access, including filesystem, Git and network operations. `read-only` is selectable; DSH remains read-only. Old stored workspace-write settings normalize to full access, while old run records preserve the access originally used.
+- **Direct execution:** new Codex work and temporary Codex or DSH runs default to full account access; `read-only` is selectable for both executors. `run_temp` applies the same per-call access selection and default regardless of executor. DSH receives `DSH_PERMISSION_MODE` in each child process, while Codex keeps its native sandbox configuration. Old stored workspace-write settings normalize to full access, while old run records preserve the access originally used. See [security behavior](security.md) for permission boundaries.
 - **Completion and retention:** `finish_work` records the caller's goal-completion decision separately from process exit. `manage_work` controls archive/history deletion/registration removal, and `work_retention` configures cleanup. Defaults retain 100 terminal results with no age-based history deletion. Native deletion also deletes spawned descendants.
 - **Host capabilities:** optional host file and command tools, plus validated workspace configuration reload, extend operations beyond registered-project model execution. Host command roots constrain the initial working directory, not all access by the spawned process. Desktop GUI control is not included.
 - **Waiting and protocol handling:** `wait_task` waits up to 45 seconds; cancellation of the wait leaves execution running. The Codex JSONL line limit is raised to 1 MiB with UTF-8 boundary coverage. These changes do not guarantee that ChatGPT continues calling tools after it ends a response.

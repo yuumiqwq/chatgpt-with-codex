@@ -1,3 +1,15 @@
+## Unreleased
+
+- Give Codex and DSH the same `run_temp` access choices: `read-only` and `danger-full-access`, with full access the default for both. Preserve the selected access in run metadata and results.
+- Pass DSH access through its existing per-process `DSH_PERMISSION_MODE` integration, overriding inherited permission settings for each invocation. Retain DSH's one-shot headless lifecycle and reject Codex-only model options.
+- Keep Codex native sandbox behavior and durable-history semantics unchanged. Current permission boundaries are documented in [security behavior](SECURITY.md) and [work management](docs/work-management.md).
+
+Validation on Windows: typecheck and build pass. The focused Codex/DSH executor, WorkService and MCP suite has 127 tests: 126 pass and one is skipped. The full suite has 227 tests: 209 pass, 17 fail and one is skipped. All 17 failing test names also fail at the pre-change HEAD `854b163`; they concern POSIX paths in catalog/registry tests and Windows symlink permissions. Two existing executor tests now explicitly select the POSIX platform they model, reducing the baseline's 19 failures without changing runtime behavior.
+
+Native DSH 0.1.2-rc.1 checks without a model session verified read-only filesystem denial inside/outside the workspace and command-write denial through the Windows runner, plus successful full-access writes. The native Windows provider reports partial enforcement, and DSH read-only does not disable network; see [security behavior](SECURITY.md) for scope and sources.
+
+The versioned entries below describe their historical releases. Earlier DSH read-only restrictions and retired APIs are not the current interface; see [current fork behavior](docs/FORK_CHANGES.md).
+
 ## 1.7.0-local.1
 
 - Remove the remaining six patch/write-authorization tools and the patch, validation and supervisor engines, leaving 24 host-enabled tools.

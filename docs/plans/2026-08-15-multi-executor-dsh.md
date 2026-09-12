@@ -1,5 +1,7 @@
 # 下一版多工作台调度 / Codex + DSH 并存 Implementation Plan
 
+历史计划说明：本文件保留 2026-08-15 版本的原始设计与后续修订，以下只读限制和旧工具名称仅适用于当时的版本。当前 `run_temp` 对 Codex 与 DSH 均支持 `read-only` 和 `danger-full-access`，默认使用完全访问；现行行为见[工作管理](../work-management.md)和 [Fork 改动说明](../FORK_CHANGES.md)。
+
 > 本文件是本版本唯一的边界真源（single source of truth）。实现、评审和验收只能以此处明确写出的范围为准；任何未写明的扩展必须先单独修订本计划并经人工评审，不能在实现时顺手加入。
 
 **目标：** 在不改变旧调用行为的前提下，让每个 `run_task` 可显式选择 `codex` 或 `dsh`，并让真实 DSH 的只读结果进入现有 `task_result` 生命周期。
