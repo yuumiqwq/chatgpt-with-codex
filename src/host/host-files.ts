@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, rename, rmdir, unlink } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { HostError, HostPolicy } from "./host-policy.js";
 
@@ -148,7 +148,7 @@ export class HostFiles {
   async remove(pathValue: string, expectedSha256?: string) {
     return this.mutate(async () => {
       const path = await this.policy.check(pathValue, "write");
-      if (this.policy.config.write_roots.some(root => relative(root, path) === "")) {
+      if (this.policy.isWriteRoot(path)) {
         throw new HostError("HOST_PATH_DENIED", "A configured root cannot be removed.");
       }
       const stat = await lstat(path);

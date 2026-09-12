@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -98,6 +98,7 @@ async function main(): Promise<void> {
   const configPath = process.argv[2];
   if (configPath === undefined) throw new Error("Workspace configuration path is required.");
   const parsed = await loadWorkspaceConfig(configPath);
+  const canonicalConfigPath = await realpath(configPath);
   const workspaceEntries = parsed.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry));
   const projectRootEntries = parsed.filter(isProjectRootEntry);
   const registry = new RegisteredWorkspaceRegistry(workspaceEntries);
@@ -141,7 +142,7 @@ async function main(): Promise<void> {
   setInterval(() => { void sweep(); }, 3_600_000).unref();
   registerHostTools(server, hostPolicy, {
     validateText: (path, content) => {
-      if (relative(resolve(configPath), path) === "") parseWorkspaceConfig(content);
+      if (relative(canonicalConfigPath, path) === "") parseWorkspaceConfig(content);
     },
     reloadWorkspaces: async () => {
       if (works.hasPendingTasks()) throw new HostError("HOST_TASKS_PENDING", "Finish pending executions before reloading workspaces.");

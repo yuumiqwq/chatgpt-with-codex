@@ -74,6 +74,12 @@ async function existingCanonicalPath(path: string): Promise<string> {
   }
 }
 
+// Protected paths may not exist yet. Resolve their nearest existing ancestor
+// so aliases use the same representation as paths returned by check().
+// A missing leaf is supported; failure to resolve its storage root must fail
+// policy loading rather than silently keeping an incomparable alias.
+const canonicalProtectionPath = existingCanonicalPath;
+
 export class HostPolicy {
   private constructor(
     readonly config: HostPolicyConfig,
@@ -81,7 +87,9 @@ export class HostPolicy {
     private readonly canonicalReadRoots: readonly string[],
     private readonly canonicalWriteRoots: readonly string[],
     private readonly canonicalCommandRoots: readonly string[],
-    private readonly protectedPaths: readonly string[]
+    private readonly protectedPaths: readonly string[],
+    private readonly canonicalPolicyPath: string,
+    private readonly credentialPaths: readonly string[]
   ) {}
 
   static async load(policyPath: string): Promise<HostPolicy> {
@@ -124,7 +132,19 @@ export class HostPolicy {
     } else {
       protectedPaths.push("/etc", "/usr", "/bin", "/sbin", "/boot", "/proc", "/sys", "/dev");
     }
-    return new HostPolicy(config, absolutePath(policyPath), readRoots, writeRoots, commandRoots, protectedPaths);
+    const checkedPolicyPath = absolutePath(policyPath);
+    const [canonicalProtectedPaths, canonicalPolicyPath, credentialPaths] = await Promise.all([
+      Promise.all(protectedPaths.map(canonicalProtectionPath)),
+      existingCanonicalPath(checkedPolicyPath),
+      Promise.all([...config.codex_homes, join(homedir(), ".codex")]
+        .map(home => canonicalProtectionPath(join(home, "auth.json"))))
+    ]);
+    return new HostPolicy(config, checkedPolicyPath, readRoots, writeRoots, commandRoots,
+      [...protectedPaths, ...canonicalProtectedPaths], canonicalPolicyPath, credentialPaths);
+  }
+
+  isWriteRoot(canonicalPath: string): boolean {
+    return this.canonicalWriteRoots.some(root => relative(root, canonicalPath) === "");
   }
 
   async check(pathValue: string, access: "read" | "write" | "command"): Promise<string> {
@@ -146,16 +166,16 @@ export class HostPolicy {
       const parts = canonical.split(/[\\/]/u);
       const secretName = parts.some(part => [".ssh", ".aws", ".azure", "tunnel-secrets"].includes(part.toLowerCase())) ||
         /^\.env(?:$|\.(?!example$|sample$))/iu.test(parse(canonical).base);
-      const authPaths = [...this.config.codex_homes, join(homedir(), ".codex")]
-        .map(home => join(home, "auth.json"));
-      if (secretName || authPaths.some(secret => relative(secret, canonical) === "")) {
+      if (secretName || this.credentialPaths.some(secret => relative(secret, canonical) === "")) {
         throw new HostError("HOST_PATH_DENIED", "Credential files are not exposed by host file tools.");
       }
     }
+    const policyPrefix = process.platform === "win32" ? this.canonicalPolicyPath.toLowerCase() : this.canonicalPolicyPath;
+    const comparisonPath = process.platform === "win32" ? canonical.toLowerCase() : canonical;
     if (access === "write" && (
       this.protectedPaths.some(root => containsPath(root, canonical)) ||
-      relative(this.policyPath, canonical) === "" ||
-      canonical.startsWith(this.policyPath + ".audit")
+      relative(this.canonicalPolicyPath, canonical) === "" ||
+      comparisonPath.startsWith(policyPrefix + ".audit")
     )) throw new HostError("HOST_PATH_DENIED", "The path is protected from host file writes.");
     return canonical;
   }
