@@ -16,7 +16,6 @@ interface WorkspaceLookup {
 
 type Registration = {
   root: string;
-  canonicalRoot: string;
   source: "manual" | "managed";
 };
 
@@ -40,7 +39,6 @@ export class RegisteredWorkspaceRegistry {
       const canonicalRoot = canonicalize(entry.root);
       this.registrations.set(entry.id, {
         root: entry.root,
-        canonicalRoot,
         source: "manual"
       });
       // Duplicate canonical roots among manual entries do not fail startup;
@@ -96,7 +94,7 @@ export class RegisteredWorkspaceRegistry {
     }
     const canonicalRoot = this.canonicalize(root);
     if (this.canonicalRoots.has(canonicalRoot)) throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
-    this.registrations.set(id, { root, canonicalRoot, source: "managed" });
+    this.registrations.set(id, { root, source: "managed" });
     this.canonicalRoots.set(canonicalRoot, id);
   }
 }

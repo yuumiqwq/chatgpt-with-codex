@@ -1,14 +1,24 @@
 {
   "name": "engineering-bridge",
-  "version": "1.7.0-local.2",
-  "description": "A local MCP bridge for durable Codex work, ephemeral execution, host operations.",
+  "version": "1.7.0-local.3",
+  "description": "Let ChatGPT chat coordinate local agents and computer tasks through MCP.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuumiqwq/chatgpt-with-codex.git"
+  },
+  "homepage": "https://github.com/yuumiqwq/chatgpt-with-codex#readme",
+  "bugs": {
+    "url": "https://github.com/yuumiqwq/chatgpt-with-codex/issues"
+  },
   "type": "module",
   "files": [
     "dist/src/**",
     "config/workspaces.example.json",
     "config/host-policy.example.json",
-    "docs/**",
+    "docs/*.md",
+    "docs/archive/README.md",
     "README.md",
+    "README.en.md",
     "README.zh-CN.md",
     "RELEASE_NOTES.md",
     "SECURITY.md",
@@ -32,7 +42,8 @@
     "mcp",
     "codex",
     "local-first",
-    "read-only",
+    "chatgpt",
+    "agents",
     "ephemeral"
   ],
   "license": "MIT",

@@ -1,9 +1,107 @@
-# Host operations
+# Deployment and host operations
 
-Optional host tools read the private .host-policy.json beside the workspace configuration. host_capabilities reports active settings. When enabled, file tools list/read/write/copy/move/delete within configured roots; replacement and deletion use current content hashes. run_host_command invokes an absolute executable with argv and a working directory, without an implicit shell or visible window. The starting-directory policy is not a process sandbox.
+Run the built STDIO entry point with one workspace configuration path. The MCP client or tunnel runner owns the process lifetime; Bridge has no bundled HTTP listener, login UI or service installer. Keep the configuration directory writable by that account and outside the source checkout.
 
-list_codex_projects groups a bounded native history page by cwd; list_codex_threads lists titles and native UUIDs. These metadata queries do not execute a model. open_work adopts an identified UUID and continue_work resumes it. For a configured Codex home, native history lookup can resolve the exact top-level `sessions` and `archived_sessions` links without enabling links for host file tools or for entries below those roots. A user may read the task in another client; simultaneous model execution cannot reliably be detected across clients.
+## Files and startup
 
-reload_workspace_config validates the file and updates the registry when no executions are pending. Workspace entries contain only `id` and `root`; `project_root` entries remain onboarding boundaries. A legacy configuration is rewritten once during load with its IDs, roots and project roots preserved. Changes to the separate host policy require a runtime restart.
+For a configuration named `workspaces.json`, Bridge uses these adjacent paths:
 
-The current tool list and inputs are in [tools](tools.md). OS permissions and file consistency checks still apply.
+| Path | Purpose |
+| --- | --- |
+| `workspaces.json` | Manual project IDs/roots and optional `project_root` onboarding boundaries. |
+| `workspaces.json.managed-workspaces.json` | Automatically registered project IDs and roots. |
+| `workspaces.json.host-policy.json` | Optional host capabilities and native history discovery policy. |
+| `workspaces.json.work-items.json` | Durable work metadata, run status and retention settings. |
+| `workspaces.json.work-items.json.results/` | Retained execution outputs and diagnostics. |
+| `workspaces.json.host-policy.json.audit.jsonl` | Host operation names, paths and status, with one rotated `.previous` file. |
+
+A generic STDIO MCP client configuration is shown below. Replace the command and both arguments with real absolute paths; use the client's own environment configuration if its syntax differs.
+
+```json
+{
+  "mcpServers": {
+    "engineering-bridge": {
+      "command": "/absolute/path/to/node",
+      "args": [
+        "/absolute/path/to/chatgpt-with-codex/dist/src/mcp-stdio.js",
+        "/absolute/path/to/private/workspaces.json"
+      ],
+      "env": {
+        "ENGINEERING_BRIDGE_CODEX_DISABLE_MCP": "1"
+      }
+    }
+  }
+}
+```
+
+This JSON configures a local launcher, not a URL field in ChatGPT. Secure MCP Tunnel can launch the STDIO service; an HTTPS deployment needs a separate MCP transport gateway. Follow [OpenAI's connection guide](https://developers.openai.com/plugins/deploy/connect-chatgpt) when attaching either transport to ChatGPT, and keep remote authentication in that transport.
+
+## Host policy
+
+The checked-in [policy example](../config/host-policy.example.json) disables host operations. For personal use with native history and direct file/command tools, an example Windows policy is:
+
+```json
+{
+  "version": 1,
+  "enabled": true,
+  "read_roots": ["E:\\Projects"],
+  "write_roots": ["E:\\Projects"],
+  "command_roots": ["E:\\Projects"],
+  "commands_enabled": true,
+  "codex_homes": ["E:\\Profiles\\Codex"],
+  "protected_paths": [],
+  "follow_links": false
+}
+```
+
+Replace every directory with an existing local path. `codex_homes` identifies actual Codex profiles containing history; it is not a request to move or recreate a profile. Use `write_roots: []` and `commands_enabled: false` if only history discovery and file reads are needed.
+
+| Setting | Meaning |
+| --- | --- |
+| `enabled` | Enables the optional host/history tool group. Without it the MCP entry point exposes 14 tools instead of 24. |
+| `read_roots` | Paths available to file reads, arbitrary `cwd` selection and native-history project validation. |
+| `write_roots` | Paths available to Bridge file mutations. This does not select executor access. |
+| `command_roots`, `commands_enabled` | Opt-in command execution and allowed starting directories. Commands can access other paths under the OS account. |
+| `codex_homes` | Profiles used for history listing and verified rollout lookup. The first is the default home for new work. |
+| `protected_paths` | Additional paths blocked from host file writes. |
+| `follow_links` | Defaults to false, rejecting links in ordinary host paths. Keep false unless the linked layout has been reviewed. |
+
+Host file tools exclude credential locations and protect the host policy itself from writes. A replacement or file deletion requires the current SHA-256; new copies and text creation refuse to overwrite an existing destination. Limits are 512 MiB per regular file, 2 MiB per text write and 256 KiB per read chunk. These checks coordinate mutations inside one Bridge process and do not provide atomic protection from all external writers.
+
+`run_host_command` requires an absolute executable and an argument array. It uses no implicit shell, allows 1–45 seconds and captures at most 65,536 bytes across stdout/stderr. On Windows use a real `.exe` or `.com`; invoke a script through an explicit interpreter. Cancellation stops the command, while cancellation of `wait_task` leaves an agent execution running.
+
+Processes started directly by Bridge use hidden console windows on Windows. An executor can still explicitly start an application or open a window; GUI operations are outside the built-in tool set.
+
+## Executor configuration
+
+Executors must be installed and configured before use. Codex is discovered on PATH; Windows npm launchers are resolved to their Node entry point without passing instructions through a shell. DSH uses PATH or its installed profile launcher.
+
+| Variable | Use |
+| --- | --- |
+| `CODEX_HOME` | Existing Codex profile fallback when no home is selected in the host policy. |
+| `ENGINEERING_BRIDGE_CODEX_AUTH_HOME` | Optional execution profile override. History discovery still uses the configured history homes. Cross-home resume uses a verified rollout path and checks the returned UUID. |
+| `ENGINEERING_BRIDGE_CODEX_PROVIDER` | Optional provider ID already configured in the selected Codex profile. |
+| `ENGINEERING_BRIDGE_CODEX_DISABLE_MCP=1` | Disables detected configured MCP servers in spawned Codex processes, including `engineering-bridge`, to avoid recursive tool invocation. Does not edit the profile configuration. |
+| `ENGINEERING_BRIDGE_CODEX_FORWARD_PROXY=1` | Explicitly forwards `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` into spawned Codex processes. |
+| `DSH_HOME`, `DEEPSEEK_API_KEY`, `DSH_TOOLS_MODE` | DSH profile location and supported runtime inputs. Supply secrets through private process configuration. |
+| `DSH_PERMISSION_MODE` | Set by Bridge for each DSH invocation from `access`; an inherited value does not override the tool request. |
+
+Only allowlisted environment variables reach executor children. Arbitrary provider credentials and DSH proxy settings are not automatically inherited; use the executor's supported private configuration. Different executors may need different setup, and Bridge does not manage their accounts.
+
+## Updating and troubleshooting
+
+`reload_workspace_config` validates and reloads project identities when no known executions are pending. It does not reload host policy. Changing host policy or replacing running code requires an operator-arranged restart after active work ends; pushing Git commits has no deployment effect.
+
+After a tool schema update, refresh the ChatGPT connection and start a new chat. First inspect `host_capabilities` and `list_workspaces` to distinguish a connection problem from a project or permission problem.
+
+| Symptom | Check |
+| --- | --- |
+| No host or history tools | Confirm the adjacent policy filename and `enabled`, then inspect the running process's configuration path. |
+| `CODEX_UNAVAILABLE` / `DSH_UNAVAILABLE` | Check executable discovery and private executor configuration under the runtime account. |
+| `CODEX_PROTOCOL_ERROR` | Check the installed CLI version against the expected app-server protocol. The current adapter invokes `codex app-server --stdio`; CLI protocol changes require validation before upgrading. |
+| `EXECUTOR_STALLED` | Codex stopped producing qualifying turn activity for two minutes. Inspect saved results and file changes before continuing the same work; already-written changes remain. |
+| `WORK_RESULT_WRITE_FAILED` | Execution ended but its result could not be written. Check state-directory space, permissions and conflicting files before retrying. |
+| Empty project search with a cursor | Follow the cursor using the same home/archive settings; groups and counts cover one page only. |
+| History resume denied | Check configured homes, the original working directory and allowed read roots; preserve linked native history layouts. |
+
+See [work management](work-management.md) for moving an installation and [compatibility](compatibility.md) for retained identifiers and concurrency limitations.

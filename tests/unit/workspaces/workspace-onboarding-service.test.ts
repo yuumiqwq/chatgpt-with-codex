@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
@@ -83,6 +83,16 @@ function service(
 function catalogStateFilePath(catalog: ManagedWorkspaceCatalog): string {
   return (catalog as unknown as { stateFilePath: string }).stateFilePath;
 }
+
+test("a filesystem root accepts an existing child directory for onboarding", async t => {
+  const project = mkdtempSync(join(tmpdir(), "bridge-root-onboarding-"));
+  t.after(() => rmSync(project, { recursive: true, force: true }));
+  const canonical = realpathSync.native(project);
+  const onboarding = service(new RegisteredWorkspaceRegistry([]), new ManagedWorkspaceCatalog(), [parse(canonical).root], []);
+  const result = await onboarding.bind({ project_path: project });
+  assert.equal(result.root, canonical);
+  assert.ok(isId(result.workspace_id));
+});
 
 test("bind registers an existing directory inside an approved root and persists it", async () => {
   const { approved, catalogPath, registry, catalog, gitInvocations } = setup();

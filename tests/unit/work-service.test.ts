@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -209,6 +209,24 @@ test("bounded result retention prunes results across restart but keeps work summ
   assert.equal(restored.taskView(b.task_id)?.output,"result:b");
   assert.equal(readdirSync(restored.resultDirectory).length,1);
   assert.equal(restored.list().works[0]?.summary,"long lived");
+});
+
+test("result persistence failure leaves a terminal error instead of a permanently running task", async t => {
+  let complete!: (result: ExecutorResult) => void;
+  const f = await fixture(t, () => new Promise(resolve => { complete = resolve; }));
+  const run = await f.service.temp({ workspace_id: "project", instruction: "work completed" });
+  // An existing directory at the result filename forces an atomic rename failure.
+  mkdirSync(run.result_file, { recursive: true });
+  complete({ kind: "completed", output: "finished" });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const result = f.service.taskView(run.task_id);
+  assert.equal(result?.ready, true);
+  assert.equal(result?.state, "failed");
+  assert.equal(result?.error?.code, "WORK_RESULT_WRITE_FAILED");
+  assert.equal(f.service.hasPendingTasks(), false);
+  assert.deepEqual(readdirSync(f.service.resultDirectory), [run.task_id + ".json"]);
+  const restored = f.create(); restored.load();
+  assert.equal(restored.taskView(run.task_id)?.error?.code, "WORK_RESULT_WRITE_FAILED");
 });
 
 test("retention defaults do not delete history and configured age rules apply without purpose categories",async t=>{

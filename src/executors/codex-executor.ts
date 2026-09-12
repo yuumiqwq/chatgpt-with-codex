@@ -294,9 +294,13 @@ export class CodexExecutor implements Executor {
         }
         const item = object(message.params.item) ? message.params.item : undefined;
         if ((message.method === "item/started" || message.method === "item/completed") && item) {
+          // Preserve unscoped notifications from older protocol versions, but
+          // never let an explicitly different thread or turn replace our result.
+          if ((message.params.threadId !== undefined && message.params.threadId !== this.threadId) ||
+              (message.params.turnId !== undefined && message.params.turnId !== (this.startedTurnId ?? this.turnId))) continue;
           if (item.type === "agentMessage") {
             if (message.method === "item/completed" && typeof item.text !== "string") { finish(failure("CODEX_PROTOCOL_ERROR")); return; }
-            if (typeof item.text === "string") output = item.text;
+            if (message.method === "item/completed" && typeof item.text === "string") output = item.text;
           }
           const id = typeof item.id === "string" ? item.id : undefined;
           if (id && (item.type === "commandExecution" || item.type === "fileChange")) {

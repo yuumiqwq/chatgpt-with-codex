@@ -1,6 +1,6 @@
 # Contributing
 
-Engineering Bridge is a local MCP bridge for durable Codex work, temporary Codex or DSH execution, project discovery and optional host operations. Keep changes focused on the current interfaces in [docs/tools.md](docs/tools.md), and include migration coverage whenever a persisted schema changes.
+chatgpt-with-codex connects a ChatGPT chat workflow to local agents and host operations. Keep changes focused on the current interfaces in [docs/tools.md](docs/tools.md), and include migration coverage whenever a persisted schema changes. Preserve existing permission defaults and persistent work semantics during maintenance.
 
 Workspace configuration defines project identity and registration boundaries. A manual workspace contains `id` and `root`; a `project_root` entry limits paths accepted by `bind_project` and `create_project`. Per-execution write access belongs to `open_work`, `continue_work` and `run_temp`. Bridge file and command operations belong to the adjacent host policy. Do not combine these independent boundaries.
 
@@ -17,6 +17,15 @@ npm ci
 npm run typecheck
 npm run build
 npm test
+npm pack --dry-run --ignore-scripts
+npm audit
+git diff --check
 ```
 
 Describe the behavior change, migration path and validation performed. Security-sensitive reports should follow [SECURITY.md](SECURITY.md).
+
+TypeScript checks include unused locals/parameters. CI covers Windows and Linux on Node 22 and 24; `npm test` builds before running the unit/MCP transport suite. Tests use temporary fixtures and mocked model execution, so native CLI or real model integration claims need separate evidence. Keep generated audit output under `codex-generated/`, which is ignored.
+
+Package versions are read from `package.json` at runtime; update the lockfile with a version change. `npm pack` runs the prepack build unless scripts are explicitly disabled. The package includes compiled runtime modules and current documentation, with an archive index rather than historical plans. It does not include tests, private sidecars or an automatic publishing/deployment workflow.
+
+Keep the public repository metadata pointed at [yuumiqwq/chatgpt-with-codex](https://github.com/yuumiqwq/chatgpt-with-codex). Retained package/protocol identifiers and known coordination limits are explained in [compatibility](docs/compatibility.md). Avoid simultaneous native-history execution or project registration across independent clients until the relevant coordination has been verified.

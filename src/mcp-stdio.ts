@@ -100,13 +100,6 @@ async function main(): Promise<void> {
   const parsed = await loadWorkspaceConfig(configPath);
   const workspaceEntries = parsed.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry));
   const projectRootEntries = parsed.filter(isProjectRootEntry);
-  for (const entry of projectRootEntries) {
-    // project_root entries share the manual workspace root semantics: absolute
-    // and already normalized, rejected at startup otherwise.
-    if (!isAbsolute(entry.root) || normalize(entry.root) !== entry.root) {
-      throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
-    }
-  }
   const registry = new RegisteredWorkspaceRegistry(workspaceEntries);
   const catalog = new ManagedWorkspaceCatalog(`${configPath}.managed-workspaces.json`);
   await catalog.load();
@@ -155,9 +148,6 @@ async function main(): Promise<void> {
       const entries = await loadWorkspaceConfig(configPath);
       const manual = entries.filter((entry): entry is WorkspaceEntry => !isProjectRootEntry(entry));
       const roots = entries.filter(isProjectRootEntry).map(entry => entry.root);
-      for (const root of roots) {
-        if (!isAbsolute(root) || normalize(root) !== root) throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
-      }
       const next = new RegisteredWorkspaceRegistry(manual);
       for (const entry of catalog.entries()) {
         if (!next.findByRoot(entry.root)) next.registerManaged(entry.id, entry.root);

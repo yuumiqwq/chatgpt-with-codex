@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem with Bridge
+description: Report a reproducible problem with chatgpt-with-codex
 title: ""
 labels: ["bug"]
 body:
@@ -55,8 +55,8 @@ body:
   - type: input
     id: bridge_version
     attributes:
-      label: Bridge version
-      placeholder: "e.g. 1.0.0"
+      label: chatgpt-with-codex version or commit
+      placeholder: "e.g. 1.7.0-local.3 or a commit SHA"
     validations:
       required: true
 

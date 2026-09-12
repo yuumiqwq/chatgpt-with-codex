@@ -1,5 +1,5 @@
 name: Setup help
-description: Get help with installation, configuration, connection, or first run
+description: Get help installing or connecting chatgpt-with-codex
 title: ""
 labels: []
 body:
@@ -42,8 +42,8 @@ body:
   - type: input
     id: bridge_version
     attributes:
-      label: Bridge version
-      placeholder: "e.g. 1.0.0"
+      label: chatgpt-with-codex version or commit
+      placeholder: "e.g. 1.7.0-local.3 or a commit SHA"
     validations:
       required: true
 

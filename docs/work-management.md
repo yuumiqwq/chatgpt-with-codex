@@ -1,6 +1,6 @@
 # Durable work and temporary execution
 
-This fork's current interface is version 1.7. The model chooses the work, declares completion and selects retention operations. Bridge records those decisions and executes them; it does not classify natural-language goals or impose permanent “formal/auxiliary” categories.
+chatgpt-with-codex separates an ongoing work from each execution performed for it. The caller chooses the work, declares completion and selects retention operations; Bridge stores and carries out those decisions without classifying natural-language goals into permanent categories.
 
 ## Choosing a work
 
@@ -18,7 +18,7 @@ Workspace records identify projects through `workspace_id`, name, root and manua
 
 Default access is `danger-full-access`, with no additional Codex approval prompt. It permits filesystem, Git-metadata and network operations using the current OS account. The caller can select `read-only` for an individual work or turn that must not edit files; Codex disables network in this mode. Historical work records are normalized during load. Stopping an execution does not roll back its edits.
 
-Bridge checks concurrent execution only within its own process. Reading a conversation in another client is compatible with this flow, but simultaneous execution by another Codex client is not reliably detected.
+Bridge serializes preparation inside its process and checks queued/running records visible in the shared registry. These checks do not form an atomic cross-process execution lease. Reading a conversation in another client is compatible with this flow, but simultaneous execution by another Codex client is not reliably detected; see [compatibility limits](compatibility.md).
 
 ## Temporary work
 
@@ -26,7 +26,7 @@ Bridge checks concurrent execution only within its own process. Reading a conver
 
 Both `executor: "codex"` and `executor: "dsh"` accept `access: "read-only"` or `access: "danger-full-access"`. Omitting executor selects Codex, and omitting access selects full access for either executor, including calls associated with a read-only work. Supply access explicitly when the temporary run must be read-only; this per-call setting does not change the associated work's stored access.
 
-Codex uses `thread/start` with `ephemeral: true` inside the existing app-server executor. It does not persist a native rollout. This has been tested with the installed native CLI. It still consumes resources while running, and Bridge persists its final result separately. Durable artifacts belong in the project; include artifact paths and commits in the work's summary/references.
+Codex uses `thread/start` with `ephemeral: true` inside the app-server executor to avoid persisting a native rollout. It still consumes resources while running, and Bridge persists its final result separately. Durable artifacts belong in the project; include artifact paths and commits in the work's summary/references. Native validation from earlier releases is recorded in the release history and is not a guarantee for every later CLI version.
 
 DSH uses its official one-shot headless command with `DSH_PERMISSION_MODE` set to the requested access in each child process. Its filesystem permission policy receives `read-only` or `danger-full-access`; Bridge does not depend on the parent process's permission setting. Executor-specific enforcement is described in [security behavior](security.md).
 
@@ -80,4 +80,4 @@ Move both history trees together after all Codex writers exit, verify every file
 
 After replacing public tools, refresh Engineering Bridge in ChatGPT's app/developer connection settings. Existing conversations can retain stale tool metadata; a fresh conversation after refresh loads the new surface. This is distinct from restarting the local runtime.
 
-Official protocol references: [app-server](https://developers.openai.com/codex/app-server/), [ephemeral noninteractive execution](https://developers.openai.com/codex/noninteractive/), [refreshing ChatGPT metadata](https://developers.openai.com/apps-sdk/deploy/connect-chatgpt/#refresh-metadata).
+Official protocol references: [app-server](https://learn.chatgpt.com/docs/app-server), [refreshing ChatGPT metadata](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata).

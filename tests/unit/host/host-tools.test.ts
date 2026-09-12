@@ -8,14 +8,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import type { ExecutorRequest } from "../../../src/executors/executor.js";
 import { locateCodexSession } from "../../../src/host/codex-sessions.js";
 import { listCodexProjects, listCodexThreads } from "../../../src/host/codex-thread-list.js";
 import { runHostCommand } from "../../../src/host/host-command.js";
 import { HostFiles } from "../../../src/host/host-files.js";
 import { containsPath, HostError, HostPolicy } from "../../../src/host/host-policy.js";
 import { registerHostTools } from "../../../src/host/host-tools.js";
-import { RegisteredWorkspaceRegistry } from "../../../src/workspaces/registered-workspace-registry.js";
 
 const THREAD_ID = "550e8400-e29b-41d4-a716-446655440000";
 const ARCHIVED_THREAD_ID = "650e8400-e29b-41d4-a716-446655440001";

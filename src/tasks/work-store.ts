@@ -39,6 +39,11 @@ export function processIsAlive(pid: number): boolean {
 export function atomicWorkJson(path: string, value: unknown) {
   mkdirSync(dirname(path), { recursive: true });
   const staging = path + "." + process.pid + ".tmp";
-  writeFileSync(staging, JSON.stringify(value) + "\n", { mode: 0o600 });
-  renameSync(staging, path);
+  try {
+    writeFileSync(staging, JSON.stringify(value) + "\n", { mode: 0o600 });
+    renameSync(staging, path);
+  } finally {
+    try { unlinkSync(staging); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
 }

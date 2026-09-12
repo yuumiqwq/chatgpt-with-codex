@@ -18,6 +18,7 @@ test("exposes the executor error codes", () => {
     "DSH_PROTOCOL_ERROR",
     "DSH_EXECUTION_FAILED",
     "TASK_INTERRUPTED",
+    "WORK_RESULT_WRITE_FAILED",
     "UNSUPPORTED_ACTION"
   ]);
   assert.deepEqual(serializeError(new CoreError("CODEX_UNAVAILABLE")), {

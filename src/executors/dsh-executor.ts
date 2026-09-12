@@ -295,7 +295,7 @@ export class DshExecutor implements Executor {
         exitImmediate = setImmediate(() => {
           exitImmediate = undefined;
           if (signalProcessGroup(child, this.platform, "SIGTERM")) {
-            terminationResult = code === 0
+            terminationResult ??= code === 0
               ? this.completedResult(chunks, bytes, truncated, tail)
               : failure("DSH_EXECUTION_FAILED");
             if (killTimer === undefined) killTimer = setTimeout(forceKill, this.timing.killGraceMs);

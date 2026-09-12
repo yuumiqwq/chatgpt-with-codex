@@ -10,3 +10,11 @@ var/
 *.tsbuildinfo
 .worktrees/
 codex-generated/
+*.tgz
+*.managed-workspaces.json
+*.managed-workspaces.json.*.tmp
+*.work-items.json
+*.work-items.json.*
+*.host-policy.json
+*.host-policy.json.audit.jsonl*
+*.migration.tmp

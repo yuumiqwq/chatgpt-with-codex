@@ -308,7 +308,16 @@ export class WorkService {
     run.updated_at = now();
     if (work) work.updated_at = run.updated_at;
     // Store complete bounded executor results separately from the small registry.
-    atomicJson(join(this.resultDirectory, run.task_id + ".json"), view);
+    try {
+      atomicJson(join(this.resultDirectory, run.task_id + ".json"), view);
+    } catch (error) {
+      // The executor has ended. Persist the failure in the registry so later
+      // readers cannot mistake a missing result for an execution still running.
+      run.state = "failed";
+      run.error = serializeError(new CoreError("WORK_RESULT_WRITE_FAILED"));
+      this.save();
+      throw error;
+    }
     this.pruneResults(); this.save();
   }
 
@@ -317,7 +326,7 @@ export class WorkService {
     if (typeof taskId !== "string") return undefined;
     const run = this.runs.get(taskId);
     if (!run) return undefined;
-    if (run.state === "completed" || run.state === "failed") {
+    if ((run.state === "completed" || run.state === "failed") && run.error?.code !== "WORK_RESULT_WRITE_FAILED") {
       try { return JSON.parse(readFileSync(join(this.resultDirectory, taskId + ".json"), "utf8")); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }

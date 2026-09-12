@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { lstat, mkdir, realpath, rmdir } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 
 import { CoreError } from "../core/errors.js";
+import { containsPath } from "../host/host-policy.js";
 import {
   runBoundedGit,
   type GitProcessOptions,
@@ -94,7 +95,7 @@ export class WorkspaceOnboardingService {
         // healthy roots below are still eligible to contain the candidate.
       }
     }
-    if (!roots.some((root) => canonical === root || canonical.startsWith(`${root}${sep}`))) {
+    if (!roots.some((root) => containsPath(root, canonical))) {
       throw new CoreError("WORKSPACE_BOUNDARY_VIOLATION");
     }
     return canonical;

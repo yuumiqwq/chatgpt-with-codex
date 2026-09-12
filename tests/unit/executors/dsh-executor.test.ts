@@ -245,6 +245,21 @@ test("direct child exit settles even when inherited stdout and stderr never clos
   assert.deepEqual(await settlesWithin(pending), { kind: "completed", output: "arrived output" });
 });
 
+test("POSIX descendant cleanup preserves an interrupt when the direct child exits zero", async t => {
+  const invocations: Invocation[] = [];
+  t.mock.method(process, "kill", (pid: number) => {
+    assert.equal(pid, -424244);
+    return true;
+  });
+  const executor = new DshExecutor(TRUSTED_CWD, fakeStarter({ hold: true, pid: 424244 }, invocations), {}, "linux",
+    { executionTimeoutMs: 1000, interruptGraceMs: 10, killGraceMs: 20 });
+  const pending = executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+  invocations[0]!.write("partial result");
+  await executor.interrupt();
+  invocations[0]!.exit(0);
+  assert.deepEqual(await settlesWithin(pending), { kind: "interrupted", output: "partial result" });
+});
+
 test("POSIX direct exit terminates a descendant that keeps inherited stdio open", {
   skip: process.platform === "win32"
 }, async () => {

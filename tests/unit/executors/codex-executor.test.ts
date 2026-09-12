@@ -746,6 +746,7 @@ test("an interrupted turn keeps the last completed agent text as real partial ou
   assert.ok(invocation);
 
   invocation.send({ method: "item/completed", params: { item: { id: "message-1", type: "agentMessage", text: "partial answer" } } });
+  invocation.send({ method: "item/started", params: { item: { id: "message-2", type: "agentMessage", text: "unfinished text" } } });
   invocation.send({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "interrupted" } } });
 
   assert.deepEqual(withoutDiagnostics(await pending), {
@@ -753,6 +754,27 @@ test("an interrupted turn keeps the last completed agent text as real partial ou
     output: "partial answer",
     threadId: "thread-1",
     evidence: []
+  });
+});
+
+test("output and evidence ignore item notifications from other threads and turns", async () => {
+  const invocations: Invocation[] = [];
+  const executor = new CodexExecutor(TRUSTED_CWD, fakeStarter({ appServerOutput: "", autoComplete: false }, invocations), {});
+  const pending = executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const invocation = invocations[0]!;
+  invocation.send({ method: "turn/started", params: { threadId: "thread-1", turn: { id: "turn-1" } } });
+  invocation.send({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1",
+    item: { id: "answer", type: "agentMessage", text: "own answer" } } });
+  for (const scope of [{ threadId: "other-thread", turnId: "turn-1" }, { threadId: "thread-1", turnId: "other-turn" }]) {
+    invocation.send({ method: "item/completed", params: { ...scope,
+      item: { id: "foreign-answer", type: "agentMessage", text: "unrelated output" } } });
+    invocation.send({ method: "item/started", params: { ...scope,
+      item: { id: "foreign-command", type: "commandExecution", command: "unrelated command" } } });
+  }
+  invocation.send({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+  assert.deepEqual(withoutDiagnostics(await pending), {
+    kind: "completed", output: "own answer", threadId: "thread-1", evidence: []
   });
 });
 

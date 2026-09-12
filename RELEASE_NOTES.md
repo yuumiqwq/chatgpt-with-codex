@@ -1,3 +1,21 @@
+# Release notes
+
+## 1.7.0-local.3
+
+This maintenance release presents the project as `chatgpt-with-codex`, a personal ChatGPT chat interface to local agents and computer tasks. Package/executable names, MCP identifiers, access defaults and persisted data migrations remain compatible with existing installations.
+
+- Prevent explicitly unrelated Codex thread/turn items from replacing the current output or evidence, and retain completed agent text when an unfinished message is interrupted.
+- Preserve DSH interruption/failure status while cleaning up descendants after direct-child exit.
+- Record `WORK_RESULT_WRITE_FAILED` when execution ends but result persistence fails, preventing a permanently running task; clean up staging files after failed atomic writes.
+- Accept child project directories when the configured onboarding boundary is a filesystem root, using the existing canonical path containment check.
+- Remove unused imports and redundant registry fields/validation, enable unused-code checks, and cover Windows/Linux with Node 22/24 in CI.
+- Update the locked Hono dependency from 4.12.34 to 4.13.7. Keep the existing direct dependency ranges and executor interfaces.
+- Rewrite the Chinese/English READMEs and deployment documentation, replace the fork comparison with compatibility notes, and give security policy and threat-model documents separate purposes. Keep historical designs in the source archive while excluding their plans from the package.
+
+Regression coverage first reproduced five failures against the previous implementation, then passed with the fixes. Validation uses the unit/MCP transport suite without restarting a running Bridge/Codex deployment or performing a live model turn.
+
+Local validation on Windows with Node 24.19.0: typecheck and build pass; 215 tests, 214 passing and one POSIX-only test skipped. The package dry run and current-document link checks pass, and `npm audit` reports zero known vulnerabilities for the installed dependency tree.
+
 ## 1.7.0-local.2
 
 - Give Codex and DSH the same `run_temp` access choices: `read-only` and `danger-full-access`, with full access the default for both. Preserve the selected access in run metadata and results.
@@ -12,7 +30,7 @@ Validation on Windows: typecheck and build pass. The full suite has 211 tests: 2
 
 Native DSH 0.1.2-rc.1 checks without a model session verified read-only filesystem denial inside/outside the workspace and command-write denial through the Windows runner, plus successful full-access writes. The native Windows provider reports partial enforcement, and DSH read-only does not disable network; see [security behavior](SECURITY.md) for scope and sources.
 
-The versioned entries below describe their historical releases. Earlier DSH read-only restrictions and retired APIs are not the current interface; see [current fork behavior](docs/FORK_CHANGES.md).
+The versioned entries below describe their historical releases. Earlier DSH read-only restrictions and retired APIs are not the current interface; see [compatibility](docs/compatibility.md) and [current tools](docs/tools.md).
 
 ## 1.7.0-local.1
 
@@ -29,8 +47,6 @@ The versioned entries below describe their historical releases. Earlier DSH read
 - Support junction history layouts and explicitly disable inherited MCP entries for subprocess execution.
 - Preserve optional controlled-patch data and validation/apply/commit operations.
 
-
-# Release notes
 
 ## v1.5.0-local.3
 
