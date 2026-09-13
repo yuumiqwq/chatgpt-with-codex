@@ -193,7 +193,7 @@ test("bind_project and create_project register workspaces inside approved projec
     assert.equal(firstBind.isError, false);
     const firstBody = firstBind.body as { workspace_id?: unknown; root?: unknown; source?: unknown };
     assert.equal(typeof firstBody.workspace_id, "string");
-    assert.equal(firstBody.root, realpathSync(otherProject));
+    assert.equal(firstBody.root, realpathSync.native(otherProject));
     assert.equal(firstBody.source, "managed");
     assert.deepEqual(Object.keys(firstBody).sort(), ["root", "source", "workspace_id"]);
 
@@ -219,7 +219,7 @@ test("bind_project and create_project register workspaces inside approved projec
     assert.equal(created.isError, false);
     const createdBody = created.body as { workspace_id?: unknown; root?: unknown; git?: unknown };
     assert.equal(typeof createdBody.workspace_id, "string");
-    assert.equal(createdBody.root, realpathSync(join(approved, "created-project")));
+    assert.equal(createdBody.root, realpathSync.native(join(approved, "created-project")));
     assert.deepEqual(createdBody.git, { initialized: true, head: "unborn" });
     assert.deepEqual(Object.keys(createdBody).sort(), ["git", "root", "workspace_id"]);
     assert.equal(readFileSync(join(approved, "created-project", ".git", "HEAD"), "utf8").includes("ref:"), true);

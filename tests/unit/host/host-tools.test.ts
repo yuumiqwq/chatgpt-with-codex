@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
@@ -201,7 +202,7 @@ test("native session lookup verifies the header UUID and original allowed cwd", 
     id: THREAD_ID, cwd: f.allowed
   } }) + "\n");
   assert.deepEqual(await locateCodexSession(f.policy, THREAD_ID), {
-    threadId: THREAD_ID, cwd: f.allowed, codexHome: f.codexHome, rolloutPath: path
+    threadId: THREAD_ID, cwd: realpathSync.native(f.allowed), codexHome: f.codexHome, rolloutPath: path
   });
   await writeFile(path, JSON.stringify({ type: "session_meta", payload: {
     id: THREAD_ID, cwd: f.outside
@@ -229,10 +230,12 @@ test("native session lookup accepts top-level Codex history junctions without re
   ]);
 
   assert.deepEqual(await locateCodexSession(f.policy, THREAD_ID), {
-    threadId: THREAD_ID, cwd: f.allowed, codexHome: f.codexHome, rolloutPath: path
+    threadId: THREAD_ID, cwd: realpathSync.native(f.allowed), codexHome: f.codexHome,
+    rolloutPath: realpathSync.native(path)
   });
   assert.deepEqual(await locateCodexSession(f.policy, ARCHIVED_THREAD_ID), {
-    threadId: ARCHIVED_THREAD_ID, cwd: f.allowed, codexHome: f.codexHome, rolloutPath: archivedPath
+    threadId: ARCHIVED_THREAD_ID, cwd: realpathSync.native(f.allowed), codexHome: f.codexHome,
+    rolloutPath: realpathSync.native(archivedPath)
   });
   await assert.rejects(f.files.read(join(linkedRoot, "2026", "09", "12", "rollout-" + THREAD_ID + ".jsonl")),
     hostCode("HOST_PATH_DENIED"));
@@ -315,12 +318,12 @@ test("project browsing groups conversations by cwd and supplies an exact scoped 
       { ...base, cwd: f.readOnly, updatedAt: 5 }], nextCursor: "next-project-page" };
   });
   assert.equal(result.projects.length, 2);
-  assert.equal(result.projects[0]!.cwd, f.allowed);
+  assert.equal(result.projects[0]!.cwd, realpathSync.native(f.allowed));
   assert.equal(result.projects[0]!.thread_count_in_page, 2);
   assert.equal(result.projects[0]!.latest_title, "Newest title");
   assert.equal(result.projects[0]!.last_updated_at, 10);
   assert.deepEqual(result.projects[0]!.thread_list_arguments,
-    { cwd: f.allowed, codex_home: f.codexHome, archived: true });
+    { cwd: realpathSync.native(f.allowed), codex_home: f.codexHome, archived: true });
   assert.equal(result.next_cursor, "next-project-page");
   assert.match(result.counts_scope, /current page only/u);
 });

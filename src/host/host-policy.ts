@@ -59,11 +59,14 @@ export async function checkAncestors(path: string): Promise<void> {
   }
 }
 
-async function existingCanonicalPath(path: string): Promise<string> {
+export async function existingCanonicalPath(
+  path: string,
+  resolveExisting: (path: string) => Promise<string> = realpath
+): Promise<string> {
   const missing: string[] = [];
   let current = path;
   for (;;) {
-    try { return resolve(await realpath(current), ...missing.reverse()); }
+    try { return resolve(await resolveExisting(current), ...missing.reverse()); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       const parent = dirname(current);
@@ -78,7 +81,7 @@ async function existingCanonicalPath(path: string): Promise<string> {
 // so aliases use the same representation as paths returned by check().
 // A missing leaf is supported; failure to resolve its storage root must fail
 // policy loading rather than silently keeping an incomparable alias.
-const canonicalProtectionPath = existingCanonicalPath;
+const canonicalProtectionPath = (path: string) => existingCanonicalPath(path);
 
 export class HostPolicy {
   private constructor(
@@ -89,6 +92,7 @@ export class HostPolicy {
     private readonly canonicalCommandRoots: readonly string[],
     private readonly protectedPaths: readonly string[],
     private readonly canonicalPolicyPath: string,
+    private readonly auditPrefixes: readonly string[],
     private readonly credentialPaths: readonly string[]
   ) {}
 
@@ -139,8 +143,13 @@ export class HostPolicy {
       Promise.all([...config.codex_homes, join(homedir(), ".codex")]
         .map(home => canonicalProtectionPath(join(home, "auth.json"))))
     ]);
+    // Audit filenames are formed by appending to the configured policy path.
+    // A short alias of the policy filename does not extend to its audit siblings.
+    const configuredAuditPrefix = join(await existingCanonicalPath(dirname(checkedPolicyPath)),
+      parse(checkedPolicyPath).base + ".audit");
     return new HostPolicy(config, checkedPolicyPath, readRoots, writeRoots, commandRoots,
-      [...protectedPaths, ...canonicalProtectedPaths], canonicalPolicyPath, credentialPaths);
+      [...protectedPaths, ...canonicalProtectedPaths], canonicalPolicyPath,
+      [configuredAuditPrefix, canonicalPolicyPath + ".audit"], credentialPaths);
   }
 
   isWriteRoot(canonicalPath: string): boolean {
@@ -170,12 +179,12 @@ export class HostPolicy {
         throw new HostError("HOST_PATH_DENIED", "Credential files are not exposed by host file tools.");
       }
     }
-    const policyPrefix = process.platform === "win32" ? this.canonicalPolicyPath.toLowerCase() : this.canonicalPolicyPath;
     const comparisonPath = process.platform === "win32" ? canonical.toLowerCase() : canonical;
     if (access === "write" && (
       this.protectedPaths.some(root => containsPath(root, canonical)) ||
       relative(this.canonicalPolicyPath, canonical) === "" ||
-      comparisonPath.startsWith(policyPrefix + ".audit")
+      this.auditPrefixes.some(prefix => comparisonPath.startsWith(
+        process.platform === "win32" ? prefix.toLowerCase() : prefix))
     )) throw new HostError("HOST_PATH_DENIED", "The path is protected from host file writes.");
     return canonical;
   }

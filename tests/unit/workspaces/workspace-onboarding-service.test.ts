@@ -104,18 +104,18 @@ test("bind registers an existing directory inside an approved root and persists 
   const result = await onboarding.bind({ project_path: project });
 
   assert.equal(isId(result.workspace_id), true);
-  assert.equal(result.root, realpathSync(project));
+  assert.equal(result.root, realpathSync.native(project));
   assert.equal(result.source, "managed");
-  assert.equal(registry.resolve(result.workspace_id), realpathSync(project));
+  assert.equal(registry.resolve(result.workspace_id), realpathSync.native(project));
   assert.deepEqual(gitInvocations, []);
 
   // Cross-restart persistence: a fresh catalog + registry resolves the same id.
   const reloadedCatalog = new ManagedWorkspaceCatalog(catalogPath);
   await reloadedCatalog.load();
-  assert.deepEqual(reloadedCatalog.entries(), [{ id: result.workspace_id, root: realpathSync(project) }]);
+  assert.deepEqual(reloadedCatalog.entries(), [{ id: result.workspace_id, root: realpathSync.native(project) }]);
   const reloadedRegistry = new RegisteredWorkspaceRegistry([]);
   for (const entry of reloadedCatalog.entries()) reloadedRegistry.registerManaged(entry.id, entry.root);
-  assert.equal(reloadedRegistry.resolve(result.workspace_id), realpathSync(project));
+  assert.equal(reloadedRegistry.resolve(result.workspace_id), realpathSync.native(project));
 });
 
 test("bind reuses an existing manual workspace identity and source", async () => {
@@ -123,7 +123,7 @@ test("bind reuses an existing manual workspace identity and source", async () =>
   const project = join(approved, "manual-proj");
   mkdirSync(project);
   const manualRegistry = new RegisteredWorkspaceRegistry([
-    { id: "manual", root: realpathSync(project) }
+    { id: "manual", root: project }
   ]);
   const onboarding = service(manualRegistry, catalog, [approved], gitInvocations);
 
@@ -131,7 +131,7 @@ test("bind reuses an existing manual workspace identity and source", async () =>
 
   assert.deepEqual(result, {
     workspace_id: "manual",
-    root: realpathSync(project),
+    root: project,
     source: "manual"
   });
   assert.deepEqual(catalog.entries(), []);
@@ -183,7 +183,7 @@ test("a failing approved root does not disable healthy roots; all-failed or non-
   const mixed = service(registry, catalog, [missingRoot, approved], gitInvocations);
   const result = await mixed.bind({ project_path: project });
   assert.equal(result.source, "managed");
-  assert.equal(result.root, realpathSync(project));
+  assert.equal(result.root, realpathSync.native(project));
 
   // A healthy root that does not contain the candidate still fails closed.
   await expectCode(() => mixed.bind({ project_path: otherApproved }), "WORKSPACE_BOUNDARY_VIOLATION");
@@ -198,7 +198,7 @@ test("a failing approved root does not disable healthy roots; all-failed or non-
   await expectCode(() => allBad.bind({ project_path: project }), "WORKSPACE_BOUNDARY_VIOLATION");
 
   // Only the successful bind left a record behind.
-  assert.deepEqual(catalog.entries(), [{ id: result.workspace_id, root: realpathSync(project) }]);
+  assert.deepEqual(catalog.entries(), [{ id: result.workspace_id, root: realpathSync.native(project) }]);
 });
 
 test("bind rejects nonexistent paths, non-directories, and missing approved roots", async () => {
@@ -223,7 +223,7 @@ test("create makes the directory, runs git init only, registers, and reports unb
   const result = await onboarding.create({ parent: approved, name: "newproj" });
 
   assert.equal(isId(result.workspace_id), true);
-  const expectedRoot = join(realpathSync(approved), "newproj");
+  const expectedRoot = join(realpathSync.native(approved), "newproj");
   assert.equal(result.root, expectedRoot);
   assert.deepEqual(result.git, { initialized: true, head: "unborn" });
   assert.equal(statSync(expectedRoot).isDirectory(), true);
@@ -266,7 +266,7 @@ test("create with a failing git init removes the new empty directory and registe
   assert.equal(gitInvocations.length, 1);
   assert.throws(() => statSync(join(approved, "failproj")), (error: unknown) =>
     (error as NodeJS.ErrnoException).code === "ENOENT");
-  assert.equal(registry.findByRoot(join(realpathSync(approved), "failproj")), undefined);
+  assert.equal(registry.findByRoot(join(realpathSync.native(approved), "failproj")), undefined);
   assert.deepEqual(catalog.entries(), []);
 });
 
@@ -282,7 +282,7 @@ test("create with a catalog persist failure keeps the target, registers nothing,
     "INTERNAL_ERROR"
   );
 
-  const target = join(realpathSync(approved), "kept-proj");
+  const target = join(realpathSync.native(approved), "kept-proj");
   assert.equal(statSync(target).isDirectory(), true);
   assert.equal(registry.findByRoot(target), undefined);
   assert.deepEqual(catalog.entries(), []);
