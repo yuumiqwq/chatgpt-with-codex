@@ -20,7 +20,7 @@ Old work records using `workspace-write` normalize to the established `danger-fu
 
 The history catalog retains `can_resume_with_write` for response compatibility. It reflects the host file policy's write check for the project, not the executor's authority: full-access execution is selected separately through `access`. Do not use this field as permission to change files or as proof that execution will be denied.
 
-Registry records/results are private runtime data. Retired proposal or supervisor sidecars are not loaded as current work and are not automatically removed; their contents may remain useful to their owner. The checked-in [design archive](archive/README.md) is historical evidence and does not define current tool behavior.
+Registry records/results are private runtime data. Retired proposal or supervisor sidecars are not loaded as current work and are not automatically removed; their contents may remain useful to their owner.
 
 ## Earlier client interfaces
 
@@ -46,4 +46,4 @@ Refresh client metadata when upgrading across a tool-surface change. No extra ap
 | CLI protocol and permissions | App-server and DSH behavior depends on installed versions. Retain tested invocation and permission mappings; validate native execution separately before upgrading a deployment. |
 | Runtime availability | A restart does not restore an in-flight process. A result write failure is recorded if the registry is writable; an unavailable registry still requires local storage repair. |
 
-The September 2026 review covered the source modules, configuration and scripts, all test files, current documentation, archived-plan boundaries, Git refs, ignore rules and package contents. Five targeted regression scenarios reproduced failures before the fixes and passed afterward. Release validation and the changes made are recorded in [release notes](../RELEASE_NOTES.md); this review does not claim a live model or deployment restart test.
+The September 2026 review covered the source modules, configuration and scripts, all test files, current documentation, Git refs, ignore rules and package contents. Five targeted regression scenarios reproduced failures before the fixes and passed afterward. Release validation and the changes made are recorded in [release notes](../RELEASE_NOTES.md); this review does not claim a live model or deployment restart test.

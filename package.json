@@ -16,7 +16,6 @@
     "config/workspaces.example.json",
     "config/host-policy.example.json",
     "docs/*.md",
-    "docs/archive/README.md",
     "README.md",
     "README.en.md",
     "README.zh-CN.md",

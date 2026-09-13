@@ -10,7 +10,7 @@ This maintenance release presents the project as `chatgpt-with-codex`, a persona
 - Accept child project directories when the configured onboarding boundary is a filesystem root, using the existing canonical path containment check.
 - Remove unused imports and redundant registry fields/validation, enable unused-code checks, and cover Windows/Linux with Node 22/24 in CI.
 - Update the locked Hono dependency from 4.12.34 to 4.13.7. Keep the existing direct dependency ranges and executor interfaces.
-- Rewrite the Chinese/English READMEs and deployment documentation, replace the fork comparison with compatibility notes, and give security policy and threat-model documents separate purposes. Keep historical designs in the source archive while excluding their plans from the package.
+- Rewrite the Chinese/English READMEs and deployment documentation, add compatibility notes, and give security policy and threat-model documents separate purposes.
 
 Regression coverage first reproduced five failures against the previous implementation, then passed with the fixes. Validation uses the unit/MCP transport suite without restarting a running Bridge/Codex deployment or performing a live model turn.
 
@@ -23,7 +23,7 @@ Local validation on Windows with Node 24.19.0: typecheck and build pass; 215 tes
 - Keep Codex native sandbox behavior and durable-history semantics unchanged. Current permission boundaries are documented in [security behavior](SECURITY.md) and [work management](docs/work-management.md).
 - Make workspace records identity-only across manual configuration, runtime discovery, onboarding results and managed persistence. Execution write access remains a per-work setting, and host operations remain governed by the separate host policy.
 - Migrate manual configuration and managed catalog v1 records once while preserving every valid workspace ID, root and project-root boundary. New managed catalogs use schema version 2.
-- Remove the remaining unused workspace authorization methods and error codes, refresh current documentation, and place superseded design plans under an explicitly historical archive.
+- Remove the remaining unused workspace authorization methods and error codes, and refresh current documentation.
 - Allow durable Codex continuation to resolve the two top-level native history links under a configured Codex home. Links inside those history trees and all links used through host file tools remain rejected when `follow_links` is false.
 
 Validation on Windows: typecheck and build pass. The full suite has 211 tests: 210 pass and one platform-specific test is skipped. Release metadata and a real MCP smoke expose 24 tools, accept only `read-only` and `danger-full-access`, preserve six workspace identities, and complete a native temporary execution.

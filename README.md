@@ -101,4 +101,4 @@ npm audit
 
 源码推送不会自动部署本机服务。更新运行版本应在现有任务结束后构建并安排服务重启，工具元数据有变化时还需刷新 ChatGPT 连接；配置和状态应保留在仓库外，并在更新中原样保留。开发与并发限制见[维护说明](CONTRIBUTING.md)及[兼容性说明](docs/compatibility.md)。
 
-仓库名称为 `chatgpt-with-codex`，npm 包名、可执行命令、MCP 服务标识和 `ENGINEERING_BRIDGE_*` 环境变量仍保留原名，以便现有安装继续工作。项目基于 [wudy29/engineering-bridge](https://github.com/wudy29/engineering-bridge) 发展，保留原作者版权声明并采用 [MIT 许可证](LICENSE)；历史设计材料位于 [docs/archive](docs/archive/README.md)，不作为当前接口规范。
+仓库名称为 `chatgpt-with-codex`，npm 包名、可执行命令、MCP 服务标识和 `ENGINEERING_BRIDGE_*` 环境变量仍保留原名，以便现有安装继续工作。项目基于 [wudy29/engineering-bridge](https://github.com/wudy29/engineering-bridge) 发展，保留原作者版权声明并采用 [MIT 许可证](LICENSE)。

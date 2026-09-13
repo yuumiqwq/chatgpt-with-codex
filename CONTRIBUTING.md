@@ -26,6 +26,6 @@ Describe the behavior change, migration path and validation performed. Security-
 
 TypeScript checks include unused locals/parameters. CI covers Windows and Linux on Node 22 and 24; `npm test` builds before running the unit/MCP transport suite. Tests use temporary fixtures and mocked model execution, so native CLI or real model integration claims need separate evidence. Keep generated audit output under `codex-generated/`, which is ignored.
 
-Package versions are read from `package.json` at runtime; update the lockfile with a version change. `npm pack` runs the prepack build unless scripts are explicitly disabled. The package includes compiled runtime modules and current documentation, with an archive index rather than historical plans. It does not include tests, private sidecars or an automatic publishing/deployment workflow.
+Package versions are read from `package.json` at runtime; update the lockfile with a version change. `npm pack` runs the prepack build unless scripts are explicitly disabled. The package includes compiled runtime modules and current documentation. It does not include tests, private sidecars or an automatic publishing/deployment workflow.
 
 Keep the public repository metadata pointed at [yuumiqwq/chatgpt-with-codex](https://github.com/yuumiqwq/chatgpt-with-codex). Retained package/protocol identifiers and known coordination limits are explained in [compatibility](docs/compatibility.md). Avoid simultaneous native-history execution or project registration across independent clients until the relevant coordination has been verified.
