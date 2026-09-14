@@ -1,8 +1,8 @@
 # chatgpt-with-codex
 
-这个仓库面向一种个人使用需求：希望 ChatGPT 的 chat 模式能够自由控制自己的电脑，自由调用各类 agent 作为子代理，用户只与 chat 模式交流，就能完成各种事项。它通过本机 MCP 服务把聊天中的指令交给本地执行器，并把执行进度、结果和可继续的工作记录交回 ChatGPT。
+此仓库面向个人使用需求：希望chat模式能够自由控制自己的电脑，自由调用本地agent作为子代理，无需经过任何审批，并且针对长时间工作时没有完成就提前终止生命周期的情况做了优化。用户只与 chat 模式交流就能完成各种事项。
 
-当前内置 Codex 和 DeepSeek Harness（DSH）两种执行器，支持项目操作、文件处理和命令执行。其他 agent 可以通过已启用的主机命令工具调用其 CLI；它们不会因此自动获得本仓库的持久会话接口。桌面图形界面操作需要另接相应工具。
+当前内置 Codex 和 DeepSeek Harness（DSH）两种执行器，支持项目操作、文件处理和命令执行。其他 agent 可以通过已启用的主机命令工具调用其 CLI。
 
 [English](README.en.md) · [工具接口](docs/tools.md) · [部署配置](docs/host-operations.md) · [安全边界](SECURITY.md)
 
