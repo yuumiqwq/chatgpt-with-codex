@@ -6,6 +6,8 @@ export const ERROR_CODES = [
   "WORKSPACE_PRECONDITION_FAILED",
   "CODEX_UNAVAILABLE",
   "CODEX_PROTOCOL_ERROR",
+  "CODEX_THREAD_BUSY",
+  "CODEX_RPC_ERROR",
   "CODEX_EXECUTION_FAILED",
   "EXECUTOR_STALLED",
   "DSH_UNAVAILABLE",
@@ -18,9 +20,20 @@ export const ERROR_CODES = [
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
+export const CODEX_RPC_METHODS = [
+  "initialize", "model/list", "thread/start", "thread/resume", "thread/name/set",
+  "turn/start", "turn/steer", "turn/interrupt"
+] as const;
+export type CodexRpcMethod = (typeof CODEX_RPC_METHODS)[number];
+export const CODEX_RPC_ERROR_CATEGORIES = ["thread_busy", "unknown"] as const;
+export type CodexRpcErrorCategory = (typeof CODEX_RPC_ERROR_CATEGORIES)[number];
+
 export interface SerializedError {
   code: ErrorCode;
   message: string;
+  rpc_method?: CodexRpcMethod;
+  rpc_error_code?: number;
+  rpc_error_category?: CodexRpcErrorCategory;
 }
 
 const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
@@ -31,6 +44,8 @@ const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
   WORKSPACE_PRECONDITION_FAILED: "The workspace preconditions were not met.",
   CODEX_UNAVAILABLE: "Codex is unavailable.",
   CODEX_PROTOCOL_ERROR: "Codex returned an invalid response.",
+  CODEX_THREAD_BUSY: "The Codex thread is currently in use by another writer.",
+  CODEX_RPC_ERROR: "Codex rejected the RPC request.",
   CODEX_EXECUTION_FAILED: "Codex execution failed.",
   EXECUTOR_STALLED: "The executor stopped producing protocol activity.",
   DSH_UNAVAILABLE: "DSH is unavailable.",
@@ -52,12 +67,31 @@ export class CoreError extends Error {
   }
 }
 
+// Never retain the server's message, data, or stderr on a rejected RPC.
+export class CodexRpcError extends CoreError {
+  constructor(public readonly rpc_method: CodexRpcMethod, public readonly rpc_error_code: number,
+    public readonly rpc_error_category: CodexRpcErrorCategory) {
+    super(rpc_error_category === "thread_busy" ? "CODEX_THREAD_BUSY" : "CODEX_RPC_ERROR");
+    this.name = "CodexRpcError";
+  }
+}
+
 export function serializeError(error: unknown): SerializedError {
   const code = error instanceof CoreError && isErrorCode(error.code)
     ? error.code
     : "INTERNAL_ERROR";
-  return {
+  const serialized: SerializedError = {
     code,
     message: ERROR_MESSAGES[code]
   };
+  if (error instanceof CodexRpcError &&
+      CODEX_RPC_METHODS.some(method => method === error.rpc_method) &&
+      Number.isSafeInteger(error.rpc_error_code) &&
+      CODEX_RPC_ERROR_CATEGORIES.some(category => category === error.rpc_error_category) &&
+      code === (error.rpc_error_category === "thread_busy" ? "CODEX_THREAD_BUSY" : "CODEX_RPC_ERROR")) {
+    serialized.rpc_method = error.rpc_method;
+    serialized.rpc_error_code = error.rpc_error_code;
+    serialized.rpc_error_category = error.rpc_error_category;
+  }
+  return serialized;
 }

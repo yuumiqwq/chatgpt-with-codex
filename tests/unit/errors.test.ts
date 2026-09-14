@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CoreError, ERROR_CODES, serializeError } from "../../src/core/errors.js";
+import { CoreError, CodexRpcError, ERROR_CODES, serializeError } from "../../src/core/errors.js";
 
 test("exposes the executor error codes", () => {
   assert.deepEqual(ERROR_CODES, [
@@ -12,6 +12,8 @@ test("exposes the executor error codes", () => {
     "WORKSPACE_PRECONDITION_FAILED",
     "CODEX_UNAVAILABLE",
     "CODEX_PROTOCOL_ERROR",
+    "CODEX_THREAD_BUSY",
+    "CODEX_RPC_ERROR",
     "CODEX_EXECUTION_FAILED",
     "EXECUTOR_STALLED",
     "DSH_UNAVAILABLE",
@@ -26,6 +28,12 @@ test("exposes the executor error codes", () => {
   });
   assert.deepEqual(serializeError(new CoreError("CODEX_PROTOCOL_ERROR")), {
     code: "CODEX_PROTOCOL_ERROR", message: "Codex returned an invalid response."
+  });
+  assert.deepEqual(serializeError(new CoreError("CODEX_THREAD_BUSY")), {
+    code: "CODEX_THREAD_BUSY", message: "The Codex thread is currently in use by another writer."
+  });
+  assert.deepEqual(serializeError(new CoreError("CODEX_RPC_ERROR")), {
+    code: "CODEX_RPC_ERROR", message: "Codex rejected the RPC request."
   });
   assert.deepEqual(serializeError(new CoreError("CODEX_EXECUTION_FAILED")), {
     code: "CODEX_EXECUTION_FAILED", message: "Codex execution failed."
@@ -109,4 +117,29 @@ test("serializeError removes details from unknown errors and values", () => {
       assert.equal(json.includes(marker), false);
     }
   }
+});
+
+test("serializeError preserves only allowlisted RPC metadata", () => {
+  const error = new CodexRpcError("thread/resume", -32600, "thread_busy");
+  Object.assign(error, { message: "secret-message", stack: "secret-stack", cause: "secret-cause",
+    data: { token: "secret-token" }, stderr: "secret-stderr" });
+  assert.deepEqual(serializeError(error), {
+    code: "CODEX_THREAD_BUSY", message: "The Codex thread is currently in use by another writer.",
+    rpc_method: "thread/resume", rpc_error_code: -32600, rpc_error_category: "thread_busy"
+  });
+});
+
+test("serializeError rejects mutated or fabricated RPC metadata", () => {
+  for (const metadata of [
+    { rpc_method: "secret-method" }, { rpc_error_category: "secret-category" },
+    { rpc_error_code: "secret-code" }, { rpc_error_code: Infinity }, { rpc_error_code: NaN },
+    { rpc_error_code: 1.5 }, { rpc_error_code: Number.MAX_SAFE_INTEGER + 1 }
+  ]) {
+    const error = Object.assign(new CodexRpcError("initialize", -32600, "unknown"), metadata);
+    assert.deepEqual(serializeError(error), { code: "CODEX_RPC_ERROR", message: "Codex rejected the RPC request." });
+  }
+  const error = Object.assign(new CoreError("CODEX_RPC_ERROR"), {
+    rpc_method: "initialize", rpc_error_code: -32600, rpc_error_category: "unknown"
+  });
+  assert.deepEqual(serializeError(error), { code: "CODEX_RPC_ERROR", message: "Codex rejected the RPC request." });
 });

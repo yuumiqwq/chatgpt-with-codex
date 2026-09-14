@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { relative } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { CoreError, serializeError } from "../core/errors.js";
+import { CoreError, CodexRpcError, serializeError, type CodexRpcMethod } from "../core/errors.js";
 import { VERSION } from "../version.js";
 import { startCodexAppServer, type ProcessStarter } from "./codex-process.js";
 export type { ProcessStarter } from "./codex-process.js";
@@ -23,6 +23,7 @@ const MAX_EVIDENCE_BYTES = 65_536;
 // Large agent messages may contain a complete patch; never truncate that patch.
 const MAX_JSONL_LINE_BYTES = 1_048_576;
 const DEFAULT_RPC_CALL_TIMEOUT_MS = 30_000;
+const ACTIVE_WRITER_MESSAGE = /^thread [0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12} already has an active writer$/iu;
 // Machine- and human-readable marker appended to any bounded evidence string
 // that was cut by MAX_TEXT, and the basis of the synthetic change/evidence
 // entries that make list and count truncation visible.
@@ -44,7 +45,7 @@ function failedTurn(turn: Record<string, unknown>): ExecutorResult {
   }
   return failure("CODEX_EXECUTION_FAILED");
 }
-function object(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null; }
+function object(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function bounded(value: unknown): string {
   if (typeof value !== "string") return "";
   if (value.length <= MAX_TEXT) return value;
@@ -62,8 +63,9 @@ export class CodexExecutor implements Executor {
   private startedTurnId: string | undefined;
   private nextId = 1;
   private pending = new Map<number, {
+    method: CodexRpcMethod;
     resolve: (value: unknown) => void;
-    reject: () => void;
+    reject: (reason?: CoreError) => void;
     timer: NodeJS.Timeout;
   }>();
   private beginInterrupt: (() => void) | undefined;
@@ -271,13 +273,23 @@ export class CodexExecutor implements Executor {
         if (!line) continue;
         let message: unknown;
         try { message = JSON.parse(line); } catch { finish(failure("CODEX_PROTOCOL_ERROR")); return; }
-        if (!object(message)) { finish(failure("CODEX_PROTOCOL_ERROR")); return; }
+        if (!object(message) || ("jsonrpc" in message && message.jsonrpc !== "2.0")) { finish(failure("CODEX_PROTOCOL_ERROR")); return; }
         if (typeof message.id === "number" && ("result" in message || "error" in message)) {
+          if (!Number.isSafeInteger(message.id) || "method" in message || "params" in message ||
+              ("result" in message && "error" in message)) { finish(failure("CODEX_PROTOCOL_ERROR")); return; }
           const waiter = this.pending.get(message.id);
+          let responseError: CodexRpcError | undefined;
+          if ("error" in message) {
+            const rpcError = message.error;
+            if (!object(rpcError) || typeof rpcError.code !== "number" || !Number.isSafeInteger(rpcError.code) ||
+                typeof rpcError.message !== "string") { finish(failure("CODEX_PROTOCOL_ERROR")); return; }
+            if (waiter) responseError = new CodexRpcError(waiter.method, rpcError.code,
+              rpcError.code === -32600 && ACTIVE_WRITER_MESSAGE.test(rpcError.message) ? "thread_busy" : "unknown");
+          }
           if (waiter) {
             this.pending.delete(message.id);
             clearTimeout(waiter.timer);
-            "error" in message ? waiter.reject() : waiter.resolve(message.result);
+            responseError ? waiter.reject(responseError) : waiter.resolve(message.result);
           }
           continue;
         }
@@ -437,7 +449,7 @@ export class CodexExecutor implements Executor {
       this.turnId = turnResult.turn.id;
       if (this.startedTurnId !== this.turnId) this.startedTurnId = undefined;
     } catch (error) {
-      if (!settled) finish(error instanceof CoreError && error.code === "UNSUPPORTED_ACTION"
+      if (!settled) finish(error instanceof CoreError
         ? { kind: "failed", error: serializeError(error) }
         : failure("CODEX_PROTOCOL_ERROR"));
     }
@@ -452,11 +464,11 @@ export class CodexExecutor implements Executor {
     if (!this.child || !this.beginInterrupt) throw new CoreError("INVALID_STATE_TRANSITION");
     this.beginInterrupt();
   }
-  private call(method: string, params: unknown): Promise<unknown> {
+  private call(method: CodexRpcMethod, params: unknown): Promise<unknown> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      if (!this.child || this.child.stdin.destroyed) { reject(); return; }
-      const rejectWaiter = (): void => reject(new Error());
+      if (!this.child || this.child.stdin.destroyed) { reject(new CoreError("CODEX_UNAVAILABLE")); return; }
+      const rejectWaiter = (reason = new CoreError("CODEX_EXECUTION_FAILED")): void => reject(reason);
       const timer = setTimeout(() => {
         const waiter = this.pending.get(id);
         if (!waiter) return;
@@ -464,7 +476,7 @@ export class CodexExecutor implements Executor {
         clearTimeout(waiter.timer);
         waiter.reject();
       }, this.timing.rpcCallTimeoutMs ?? DEFAULT_RPC_CALL_TIMEOUT_MS);
-      this.pending.set(id, { resolve, reject: rejectWaiter, timer });
+      this.pending.set(id, { method, resolve, reject: rejectWaiter, timer });
       try {
         this.child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
       } catch {
@@ -472,7 +484,7 @@ export class CodexExecutor implements Executor {
         if (!waiter) return;
         this.pending.delete(id);
         clearTimeout(waiter.timer);
-        waiter.reject();
+        waiter.reject(new CoreError("CODEX_UNAVAILABLE"));
       }
     });
   }

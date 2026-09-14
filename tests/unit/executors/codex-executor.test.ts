@@ -7,7 +7,7 @@ import { PassThrough, Writable } from "node:stream";
 import test from "node:test";
 import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
 
-import { CoreError } from "../../../src/core/errors.js";
+import { CoreError, serializeError } from "../../../src/core/errors.js";
 import { isId } from "../../../src/core/ids.js";
 import { CodexExecutor } from "../../../src/executors/codex-executor.js";
 import type { ProcessStarter } from "../../../src/executors/codex-executor.js";
@@ -54,6 +54,7 @@ interface Invocation {
 
 interface FakeBehavior {
   appServerOutput?: string;
+  rpcError?: { method: string; error: unknown };
   turnError?: { message: string; codexErrorInfo?: string; additionalDetails?: string };
   modelList?: readonly { id: string; model: string; isDefault?: boolean; defaultReasoningEffort?: string; supportedReasoningEfforts?: readonly { reasoningEffort: string; description: string }[] }[];
   stdout?: string;
@@ -89,6 +90,14 @@ function fakeStarter(behavior: FakeBehavior, invocations: Invocation[]): Process
         if (behavior.appServerOutput !== undefined) {
           const message = JSON.parse(chunk.toString()) as { id?: number; method: string };
           if (message.id !== undefined) {
+            if (behavior.rpcError?.method === message.method) {
+              queueMicrotask(() => {
+                stderr.write(behavior.stderr ?? "");
+                invocation.send({ id: message.id, error: behavior.rpcError!.error });
+              });
+              callback();
+              return;
+            }
             if (behavior.ignoredMethods?.includes(message.method)) {
               callback();
               return;
@@ -182,8 +191,9 @@ test("uses the fixed safe invocation and returns agent text", async () => {
   const instruction = "  exact prompt\nwith $() and `quotes`  ";
 
   const result = await executor.execute({ taskId: TASK_ID, instruction });
-  assert.equal(result.kind, "completed");
-  if (result.kind === "completed") assert.equal(result.output, "final answer");
+  assert.deepEqual(withoutDiagnostics(result), {
+    kind: "completed", output: "final answer", threadId: "thread-1", evidence: []
+  });
   assert.equal(invocations.length, 1);
   const invocation = invocations[0];
   assert.ok(invocation);
@@ -438,7 +448,7 @@ test("hard deadline terminates Codex when initialize never responds", async () =
   assert.deepEqual(invocations[0]?.signals, ["SIGTERM", "SIGKILL"]);
 });
 
-test("initialize RPC times out before the whole execution deadline", async () => {
+test("initialize RPC times out as execution failure before the whole execution deadline", async () => {
   const invocations: Invocation[] = [];
   const executor = timedExecutor(fakeStarter({
     appServerOutput: "",
@@ -449,7 +459,7 @@ test("initialize RPC times out before the whole execution deadline", async () =>
   try {
     assert.deepEqual(withoutDiagnostics(await settlesWithin(pending, 200)), {
       kind: "failed",
-      error: { code: "CODEX_PROTOCOL_ERROR", message: "Codex returned an invalid response." }
+      error: { code: "CODEX_EXECUTION_FAILED", message: "Codex execution failed." }
     });
   } finally {
     if (invocations[0]?.signals.length === 0) {
@@ -692,6 +702,112 @@ test("rejects malformed JSONL, missing messages, and malformed message structure
       error: { code: "CODEX_PROTOCOL_ERROR", message: "Codex returned an invalid response." }
     });
     assert.equal(JSON.stringify(result).includes("secret raw line"), false);
+  }
+});
+
+test("active writer conflicts return a safe busy error for resume and turn start", async () => {
+  for (const method of ["thread/resume", "turn/start"]) {
+    const invocations: Invocation[] = [];
+    const threads: string[] = [];
+    const executor = timedExecutor(fakeStarter({ appServerOutput: "unused", rpcError: {
+      method, error: { code: -32600, message: `thread ${TASK_ID_VALUE} already has an active writer` }
+    } }, invocations));
+    const result = await executor.execute({ taskId: TASK_ID, instruction: "inspect",
+      ...(method === "thread/resume" ? { threadId: TASK_ID_VALUE } : {}),
+      onThreadId: id => { threads.push(id); } });
+
+    assert.deepEqual(withoutDiagnostics(result), { kind: "failed", error: {
+      code: "CODEX_THREAD_BUSY", message: "The Codex thread is currently in use by another writer.",
+      rpc_method: method, rpc_error_code: -32600, rpc_error_category: "thread_busy"
+    } });
+    assert.equal(JSON.stringify(result).includes(TASK_ID_VALUE), false);
+    assert.equal(invocations.length, 1);
+    assert.deepEqual(invocations[0]!.signals, ["SIGTERM", "SIGKILL"]);
+    assert.equal((executor as unknown as { pending: Map<number, unknown> }).pending.size, 0);
+    if (method === "thread/resume") {
+      assert.deepEqual(threads, []);
+      assert.equal(invocations[0]!.stdin.includes('"method":"turn/start"'), false);
+      assert.equal(invocations[0]!.stdin.includes('"method":"thread/start"'), false);
+    }
+  }
+});
+
+test("legal RPC errors retain each request method and code without raw server details", async () => {
+  const secret = "secret-server-message /private/path " + "x".repeat(100_000);
+  for (const method of ["initialize", "model/list", "thread/start", "thread/resume", "thread/name/set", "turn/start"]) {
+    const executor = timedExecutor(fakeStarter({ appServerOutput: "unused", stderr: "secret-stderr", rpcError: {
+      method, error: { code: -32600, message: secret, data: { rpc_method: "secret-method", token: "secret-token" } }
+    } }, []));
+    const result = await executor.execute({ taskId: TASK_ID, instruction: "inspect",
+      ...(method === "model/list" ? { model: "test-model" } : {}),
+      ...(method === "thread/resume" ? { threadId: "thread-1" } : {}),
+      ...(method === "thread/name/set" ? { threadName: "test-name" } : {}) });
+
+    assert.deepEqual(withoutDiagnostics(result), { kind: "failed", error: {
+      code: "CODEX_RPC_ERROR", message: "Codex rejected the RPC request.",
+      rpc_method: method, rpc_error_code: -32600, rpc_error_category: "unknown"
+    } });
+    assert.doesNotMatch(JSON.stringify(result), /secret-|private\/path/u);
+    assert.ok(Buffer.byteLength(JSON.stringify(result), "utf8") < 512);
+  }
+});
+
+test("busy classification requires the exact allowlisted code and message pattern", async () => {
+  const busy = `thread ${TASK_ID_VALUE} already has an active writer`;
+  for (const error of [
+    { code: -32600, message: `secret-prefix ${busy}` },
+    { code: -32600, message: `${busy}\nsecret-suffix` },
+    { code: -32600, message: "thread secret-path already has an active writer" },
+    { code: -32603, message: busy }
+  ]) {
+    const executor = timedExecutor(fakeStarter({ appServerOutput: "unused", rpcError: { method: "thread/resume", error } }, []));
+    const result = await executor.execute({ taskId: TASK_ID, threadId: TASK_ID_VALUE, instruction: "inspect" });
+    assert.deepEqual(withoutDiagnostics(result), { kind: "failed", error: {
+      code: "CODEX_RPC_ERROR", message: "Codex rejected the RPC request.",
+      rpc_method: "thread/resume", rpc_error_code: error.code, rpc_error_category: "unknown"
+    } });
+  }
+});
+
+test("steering RPC rejection stays structured and leaves the active turn running", async () => {
+  const invocations: Invocation[] = [];
+  const executor = timedExecutor(fakeStarter({ appServerOutput: "", autoComplete: false, rpcError: {
+    method: "turn/steer", error: { code: -32000, message: "secret-steer", data: "secret-data" }
+  } }, invocations));
+  const pending = executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  invocations[0]!.send({ method: "turn/started", params: { threadId: "thread-1", turn: { id: "turn-1" } } });
+  await assert.rejects(executor.steer("continue"), error => {
+    assert.deepEqual(serializeError(error), {
+      code: "CODEX_RPC_ERROR", message: "Codex rejected the RPC request.",
+      rpc_method: "turn/steer", rpc_error_code: -32000, rpc_error_category: "unknown"
+    });
+    assert.doesNotMatch(JSON.stringify(error), /secret-/u);
+    return true;
+  });
+  assert.deepEqual(invocations[0]!.signals, []);
+  invocations[0]!.send({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+  assert.equal((await pending).kind, "completed");
+});
+
+test("malformed JSON and invalid RPC envelopes remain protocol errors", async () => {
+  const error = { code: -32600, message: "secret-message" };
+  const messages: unknown[] = [null, [], { id: 1 }, { id: 1, error: null }, { id: 1, error: [] },
+    { id: 1, error: { code: "-32600", message: "secret-message" } },
+    { id: 1, error: { code: 1.5, message: "secret-message" } },
+    { id: 1, error: { code: -32600 } }, { id: 1, error: { code: -32600, message: {} } },
+    { id: 1, result: {}, error }, { id: 1, method: "secret-method", params: {}, error },
+    { id: 1, jsonrpc: "1.0", error }, { id: 1.5, error }, { method: "secret-method", params: [] }];
+  for (const stdout of ["not-json secret-message\n", ...messages.map(message => JSON.stringify(message) + "\n")]) {
+    const invocations: Invocation[] = [];
+    const executor = timedExecutor(fakeStarter({ hold: true }, invocations));
+    const pending = executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+    invocations[0]!.writeStdout(stdout);
+    const result = await pending;
+    assert.deepEqual(withoutDiagnostics(result), {
+      kind: "failed", error: { code: "CODEX_PROTOCOL_ERROR", message: "Codex returned an invalid response." }
+    });
+    assert.doesNotMatch(JSON.stringify(result), /secret-/u);
   }
 });
 

@@ -98,7 +98,9 @@ After a tool schema update, refresh the ChatGPT connection and start a new chat.
 | --- | --- |
 | No host or history tools | Confirm the adjacent policy filename and `enabled`, then inspect the running process's configuration path. |
 | `CODEX_UNAVAILABLE` / `DSH_UNAVAILABLE` | Check executable discovery and private executor configuration under the runtime account. |
-| `CODEX_PROTOCOL_ERROR` | Check the installed CLI version against the expected app-server protocol. The current adapter invokes `codex app-server --stdio`; CLI protocol changes require validation before upgrading. |
+| `CODEX_THREAD_BUSY` | The Codex thread is in use by another writer. Wait for that writer to release it before continuing the same thread. This identifies the explicit active-writer conflict, not every RPC `-32600`. |
+| `CODEX_RPC_ERROR` | Codex returned a valid RPC error. Inspect `rpc_method`, `rpc_error_code` and the safe `rpc_error_category`; raw server messages, error data and stderr are not returned. |
+| `CODEX_PROTOCOL_ERROR` | Codex returned malformed or unexpected protocol messages/structure. Check the installed CLI version against the expected app-server protocol. The current adapter invokes `codex app-server --stdio`; CLI protocol changes require validation before upgrading. |
 | `EXECUTOR_STALLED` | Codex stopped producing qualifying turn activity for two minutes. Inspect saved results and file changes before continuing the same work; already-written changes remain. |
 | `WORK_RESULT_WRITE_FAILED` | Execution ended but its result could not be written. Check state-directory space, permissions and conflicting files before retrying. |
 | Empty project search with a cursor | Follow the cursor using the same home/archive settings; groups and counts cover one page only. |

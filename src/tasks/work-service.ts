@@ -4,7 +4,7 @@ import { atomicWorkJson as atomicJson, processIsAlive, withWorkStoreLock } from 
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import { newId } from "../core/ids.js";
-import { serializeError, CoreError } from "../core/errors.js";
+import { serializeError, CoreError, CODEX_RPC_METHODS, CODEX_RPC_ERROR_CATEGORIES } from "../core/errors.js";
 import type { Executor, SandboxMode } from "../executors/executor.js";
 import type { TaskView, ExecutorFactory, ExecutorName } from "./execution-types.js";
 import { RegisteredWorkspaceRegistry } from "../workspaces/registered-workspace-registry.js";
@@ -27,7 +27,12 @@ const RunSchema = z.object({
   task_id: z.string().uuid(), work_id: z.string().uuid().optional(), ephemeral: z.boolean(),
   executor: z.enum(["codex", "dsh"]), state: z.enum(["queued", "running", "completed", "failed"]),
   access: z.enum(["read-only", "workspace-write", "danger-full-access"]), created_at: z.string(), updated_at: z.string(),
-  thread_id: z.string().optional(), error: z.object({ code: z.string(), message: z.string() }).optional(),
+  thread_id: z.string().optional(), error: z.object({
+    code: z.string(), message: z.string(),
+    rpc_method: z.enum(CODEX_RPC_METHODS).optional(),
+    rpc_error_code: z.number().int().safe().optional(),
+    rpc_error_category: z.enum(CODEX_RPC_ERROR_CATEGORIES).optional()
+  }).optional(),
   owner_pid: z.number().int().positive().optional()
 });
 type Run = z.infer<typeof RunSchema>;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
+import { CoreError, CodexRpcError, serializeError } from "../../src/core/errors.js";
 import { WorkService } from "../../src/tasks/work-service.js";
 import { RegisteredWorkspaceRegistry } from "../../src/workspaces/registered-workspace-registry.js";
 import { HostPolicy } from "../../src/host/host-policy.js";
@@ -63,6 +64,30 @@ test("native UUID and write access survive restart; semantic completion is separ
   assert.equal(b?.threadId, a?.threadId);
   assert.equal(f.requests[1]?.sandbox, "danger-full-access");
   assert.equal(f.requests[1]?.threadId, a?.threadId);
+});
+
+test("RPC metadata and legacy errors survive result reads, registry reload and missing result files", async t => {
+  for (const error of [
+    serializeError(new CodexRpcError("thread/resume", -32600, "thread_busy")),
+    serializeError(new CodexRpcError("turn/start", -32603, "unknown")),
+    serializeError(new CoreError("CODEX_EXECUTION_FAILED"))
+  ]) {
+    const f = await fixture(t, async () => ({ kind: "failed", error }));
+    const work = await f.service.open({ thread_id: randomUUID(), access: "read-only" });
+    const run = await f.service.continue(work.work_id, { instruction: "inspect" });
+    const result = await f.service.waitTask(run.task_id);
+    assert.equal(result?.state, "failed");
+    assert.deepEqual(result?.error, error);
+    assert.deepEqual(f.service.list().works[0]?.last_run?.error, error);
+
+    const restored = f.create(); restored.load();
+    assert.deepEqual(restored.taskView(run.task_id)?.error, error);
+    assert.deepEqual(restored.list().works[0]?.last_run?.error, error);
+    assert.equal(restored.list().works[0]?.thread_id, work.thread_id);
+    assert.equal(restored.list().works[0]?.access, "read-only");
+    rmSync(join(restored.resultDirectory, run.task_id + ".json"));
+    assert.deepEqual(restored.taskView(run.task_id)?.error, error);
+  }
 });
 
 test("adoption is idempotent and conflicting selectors fail", async t => {

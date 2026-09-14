@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+- Report explicit Codex active-writer conflicts as `CODEX_THREAD_BUSY`; other valid JSON-RPC errors use `CODEX_RPC_ERROR`, including unrelated `-32600` errors. Keep malformed or unexpected protocol responses under `CODEX_PROTOCOL_ERROR` and report unanswered RPC deadlines as `CODEX_EXECUTION_FAILED`.
+- Preserve bounded, allowlisted `rpc_method`, numeric `rpc_error_code` and `rpc_error_category` through executor failure, steering and stored result/registry reads. Expose fixed safe messages without retaining raw server messages, error data or stderr. Existing records without these optional fields remain readable.
+- Preserve successful execution, permission settings and thread lifecycle; add regression coverage for classification, malformed responses, secret filtering and persistence. No automatic retry, writer coordination or thread replacement is introduced.
+
 ## 1.7.0-local.3
 
 This maintenance release presents the project as `chatgpt-with-codex`, a personal ChatGPT chat interface to local agents and computer tasks. Package/executable names, MCP identifiers, access defaults and persisted data migrations remain compatible with existing installations.
