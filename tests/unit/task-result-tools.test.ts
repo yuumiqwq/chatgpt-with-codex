@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import type { ExecutorResult } from "../../src/executors/executor.js";
+import type { ExecutorActivity, ExecutorRequest, ExecutorResult } from "../../src/executors/executor.js";
 import { registerTaskResultTools } from "../../src/task-result-tools.js";
 import { WorkService } from "../../src/tasks/work-service.js";
 import { RegisteredWorkspaceRegistry } from "../../src/workspaces/registered-workspace-registry.js";
@@ -23,11 +23,12 @@ function deferred<T>() {
 async function harness(t: TestContext) {
   const pending = deferred<ExecutorResult>();
   let interrupts = 0;
+  let liveRequest: ExecutorRequest | undefined;
   const root = mkdtempSync(join(tmpdir(), "bridge-result-test-"));
   const registry = new RegisteredWorkspaceRegistry([{ id: "known", root }]);
   const policy = await HostPolicy.create({ version: 1, codex_homes: [root] }, join(root, "policy"));
   const service = new WorkService(join(root, "work.json"), registry, () => ({
-    execute: () => pending.promise,
+    execute: (request: ExecutorRequest) => { liveRequest = request; return pending.promise; },
     interrupt: async () => { interrupts += 1; }
   }), policy);
   const server = new McpServer({ name: "test-server", version: "1.0.0" });
@@ -56,7 +57,8 @@ async function harness(t: TestContext) {
       body: JSON.parse(content[0]!.text!) as Record<string, unknown>
     };
   };
-  return { service, client, pending, call, interrupts: () => interrupts };
+  return { service, client, pending, call, interrupts: () => interrupts,
+    emitActivity: (activity: ExecutorActivity) => liveRequest?.onActivity?.(activity) };
 }
 
 test("wait_task lists its timeout bounds and default beside task_result", async (t) => {
@@ -70,9 +72,9 @@ test("wait_task lists its timeout bounds and default beside task_result", async 
   };
   assert.equal(timeout.type, "number");
   assert.equal(timeout.minimum, 1);
-  assert.equal(timeout.maximum, 45);
+  assert.equal(timeout.maximum, 300);
   assert.equal(timeout.default, 25);
-  for (const value of [0, 46, "25"]) {
+  for (const value of [0, 301, "25"]) {
     const result = await client.callTool({
       name: "wait_task",
       arguments: { task_id: "unknown", timeout_seconds: value }
@@ -115,13 +117,34 @@ test("wait_task MCP timeout returns a running view and leaves execution alive", 
   const started = performance.now();
   const result = await call("wait_task", { task_id: taskId, timeout_seconds: 1 });
   assert.ok(performance.now() - started >= 900);
-  assert.deepEqual(result, before);
+  assert.equal(result.isError, before.isError);
+  assert.equal(result.body.task_id, before.body.task_id);
+  assert.equal(result.body.state, "running");
+  assert.equal(result.body.ready, false);
+  assert.ok(Number(result.body.elapsed_seconds) >= Number(before.body.elapsed_seconds));
   assert.equal(interrupts(), 0);
   assert.equal(service.taskView(taskId)?.state, "running");
   pending.resolve({ kind: "completed", output: "finished later" });
   const ready = await call("wait_task", { task_id: taskId, timeout_seconds: 1 });
   assert.equal(ready.body.ready, true);
   assert.equal(ready.body.output, "finished later");
+});
+
+test("running task view exposes bounded activity diagnostics", { timeout: 5000 }, async (t) => {
+  const { service, pending, call, emitActivity } = await harness(t);
+  const { task_id: taskId } = await service.temp({ workspace_id: "known", instruction: "inspect" });
+  await Promise.resolve();
+  emitActivity({
+    at: "2026-09-26T00:00:00.000Z",
+    active_item: { type: "commandExecution", status: "inProgress", command: "pytest tests" }
+  });
+  const result = await call("task_result", { task_id: taskId });
+  assert.equal(result.body.ready, false);
+  assert.equal(result.body.last_activity_at, "2026-09-26T00:00:00.000Z");
+  assert.deepEqual(result.body.active_item, { type: "commandExecution", status: "inProgress", command: "pytest tests" });
+  assert.equal(typeof result.body.elapsed_seconds, "number");
+  pending.resolve({ kind: "completed", output: "done" });
+  await service.waitTask(taskId, 1);
 });
 
 test("wait_task returns UNKNOWN_TASK for invalid and unknown IDs", { timeout: 5000 }, async (t) => {

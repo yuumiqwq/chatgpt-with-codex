@@ -36,7 +36,7 @@ Editing, validation and Git operations use `continue_work` or `run_temp`. A read
 
 ## Waiting and completion
 
-`wait_task` waits up to 45 seconds per call. A timeout returns current status; when `ready=false`, the caller should issue another wait. Cancelling a wait leaves the execution running. These mechanics do not guarantee that ChatGPT itself will continue making calls after ending its response.
+`wait_task` waits up to 300 seconds per call by default. A timeout returns current status; when `ready=false`, the caller should issue another wait. The maximum wait is configurable and remains independent from executor timeouts. Cancelling a wait leaves the execution running. These mechanics do not guarantee that ChatGPT itself will continue making calls after ending its response.
 
 `control_task` offers `steer` and `interrupt`. Successful new executions directly become `completed` and expose `output`. `task_result` reads retained executions in the work registry.
 

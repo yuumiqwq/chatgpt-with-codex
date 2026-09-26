@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- Report explicit Codex active-writer conflicts as `CODEX_THREAD_BUSY`; other valid JSON-RPC errors use `CODEX_RPC_ERROR`, including unrelated `-32600` errors. Keep malformed or unexpected protocol responses under `CODEX_PROTOCOL_ERROR` and report unanswered RPC deadlines as `CODEX_EXECUTION_FAILED`.
+- Raise the default executor turn deadline to 60 minutes. Codex now uses a five-minute ordinary protocol-inactivity watchdog and a 15-minute command-in-progress inactivity watchdog, with environment overrides for both and for the 30-second RPC deadline.
+- Distinguish total-deadline, RPC-timeout and failed-turn outcomes as `EXECUTION_DEADLINE_EXCEEDED`, `CODEX_RPC_TIMEOUT` and `CODEX_TURN_FAILED`; retain the existing safe server-overloaded message and RPC rejection metadata.
+- Allow `wait_task` long-polls up to 300 seconds by default without extending executor liveness, and expose live `last_activity_at`, `active_item` and `elapsed_seconds` diagnostics while a task is running.
+- Report explicit Codex active-writer conflicts as `CODEX_THREAD_BUSY`; other valid JSON-RPC errors use `CODEX_RPC_ERROR`, including unrelated `-32600` errors. Keep malformed or unexpected protocol responses under `CODEX_PROTOCOL_ERROR`; unanswered RPC deadlines now use `CODEX_RPC_TIMEOUT`, ordinary failed turns use `CODEX_TURN_FAILED`, and total turn deadlines use `EXECUTION_DEADLINE_EXCEEDED`.
 - Preserve bounded, allowlisted `rpc_method`, numeric `rpc_error_code` and `rpc_error_category` through executor failure, steering and stored result/registry reads. Expose fixed safe messages without retaining raw server messages, error data or stderr. Existing records without these optional fields remain readable.
 - Preserve successful execution, permission settings and thread lifecycle; add regression coverage for classification, malformed responses, secret filtering and persistence. No automatic retry, writer coordination or thread replacement is introduced.
 

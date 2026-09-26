@@ -8,7 +8,10 @@ export const ERROR_CODES = [
   "CODEX_PROTOCOL_ERROR",
   "CODEX_THREAD_BUSY",
   "CODEX_RPC_ERROR",
+  "CODEX_RPC_TIMEOUT",
+  "CODEX_TURN_FAILED",
   "CODEX_EXECUTION_FAILED",
+  "EXECUTION_DEADLINE_EXCEEDED",
   "EXECUTOR_STALLED",
   "DSH_UNAVAILABLE",
   "DSH_PROTOCOL_ERROR",
@@ -46,7 +49,10 @@ const ERROR_MESSAGES: Readonly<Record<ErrorCode, string>> = {
   CODEX_PROTOCOL_ERROR: "Codex returned an invalid response.",
   CODEX_THREAD_BUSY: "The Codex thread is currently in use by another writer.",
   CODEX_RPC_ERROR: "Codex rejected the RPC request.",
+  CODEX_RPC_TIMEOUT: "Codex did not answer the RPC request before its deadline.",
+  CODEX_TURN_FAILED: "Codex reported that the turn failed.",
   CODEX_EXECUTION_FAILED: "Codex execution failed.",
+  EXECUTION_DEADLINE_EXCEEDED: "The executor exceeded its configured deadline.",
   EXECUTOR_STALLED: "The executor stopped producing protocol activity.",
   DSH_UNAVAILABLE: "DSH is unavailable.",
   DSH_PROTOCOL_ERROR: "DSH returned an invalid response.",
@@ -76,6 +82,13 @@ export class CodexRpcError extends CoreError {
   }
 }
 
+export class CodexRpcTimeoutError extends CoreError {
+  constructor(public readonly rpc_method: CodexRpcMethod) {
+    super("CODEX_RPC_TIMEOUT");
+    this.name = "CodexRpcTimeoutError";
+  }
+}
+
 export function serializeError(error: unknown): SerializedError {
   const code = error instanceof CoreError && isErrorCode(error.code)
     ? error.code
@@ -84,6 +97,10 @@ export function serializeError(error: unknown): SerializedError {
     code,
     message: ERROR_MESSAGES[code]
   };
+  if (error instanceof CodexRpcTimeoutError && CODEX_RPC_METHODS.some(method => method === error.rpc_method) &&
+      code === "CODEX_RPC_TIMEOUT") {
+    serialized.rpc_method = error.rpc_method;
+  }
   if (error instanceof CodexRpcError &&
       CODEX_RPC_METHODS.some(method => method === error.rpc_method) &&
       Number.isSafeInteger(error.rpc_error_code) &&

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { relative } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { CoreError, CodexRpcError, serializeError, type CodexRpcMethod } from "../core/errors.js";
+import { CoreError, CodexRpcError, CodexRpcTimeoutError, serializeError, type CodexRpcMethod } from "../core/errors.js";
 import { VERSION } from "../version.js";
 import { startCodexAppServer, type ProcessStarter } from "./codex-process.js";
 export type { ProcessStarter } from "./codex-process.js";
@@ -15,6 +15,7 @@ import {
   type ExecutorResult,
   type ExecutorTiming
 } from "./executor.js";
+import { codexExecutorTimingFromEnvironment } from "../runtime-config.js";
 
 const MAX_EVIDENCE = 50;
 const MAX_TEXT = 16_384;
@@ -29,7 +30,7 @@ const ACTIVE_WRITER_MESSAGE = /^thread [0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{1
 // entries that make list and count truncation visible.
 const TRUNCATION_MARKER = "[truncated]";
 
-function failure(code: "CODEX_UNAVAILABLE" | "CODEX_PROTOCOL_ERROR" | "CODEX_EXECUTION_FAILED" | "EXECUTOR_STALLED"): ExecutorResult {
+function failure(code: "CODEX_UNAVAILABLE" | "CODEX_PROTOCOL_ERROR" | "CODEX_EXECUTION_FAILED" | "CODEX_TURN_FAILED" | "CODEX_RPC_TIMEOUT" | "EXECUTION_DEADLINE_EXCEEDED" | "EXECUTOR_STALLED"): ExecutorResult {
   return { kind: "failed", error: serializeError(new CoreError(code)) };
 }
 function failedTurn(turn: Record<string, unknown>): ExecutorResult {
@@ -43,7 +44,7 @@ function failedTurn(turn: Record<string, unknown>): ExecutorResult {
       }
     };
   }
-  return failure("CODEX_EXECUTION_FAILED");
+  return failure("CODEX_TURN_FAILED");
 }
 function object(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function bounded(value: unknown): string {
@@ -73,7 +74,7 @@ export class CodexExecutor implements Executor {
   constructor(private readonly workspaceRoot: string, private readonly startProcess: ProcessStarter = spawn,
     private readonly hostEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
     private readonly platform: NodeJS.Platform = process.platform,
-    private readonly timing: ExecutorTiming & { readonly rpcCallTimeoutMs?: number } = DEFAULT_EXECUTOR_TIMING) {}
+    private readonly timing: ExecutorTiming = codexExecutorTimingFromEnvironment(hostEnvironment)) {}
 
   async execute(request: ExecutorRequest): Promise<ExecutorResult> {
     const resumeFromPath = request.threadPath !== undefined &&
@@ -96,6 +97,8 @@ export class CodexExecutor implements Executor {
     } catch { return withDiagnostics(failure("CODEX_UNAVAILABLE")); }
 
     const evidence = new Map<string, ExecutorEvidence>();
+    const activeCommandItems = new Set<string>();
+    let activeCommand: { id: string; command?: string } | undefined;
     let evidenceDropped = 0;
     let output = "";
     let buffer = "";
@@ -111,10 +114,10 @@ export class CodexExecutor implements Executor {
     let exitImmediate: NodeJS.Immediate | undefined;
     let terminationResult: ExecutorResult | undefined;
     let killSignalled = false;
-    const rejectPending = (): void => {
+    const rejectPending = (reason = new CoreError("CODEX_EXECUTION_FAILED")): void => {
       for (const waiter of this.pending.values()) {
         clearTimeout(waiter.timer);
-        waiter.reject();
+        waiter.reject(reason);
       }
       this.pending.clear();
     };
@@ -122,7 +125,10 @@ export class CodexExecutor implements Executor {
       if (settled) return;
       const finalResult = terminationResult?.kind === "interrupted"
         ? { ...terminationResult, output, evidence: visibleEvidence() }
-        : terminationResult ?? result;
+        : terminationResult?.kind === "failed"
+          ? { ...terminationResult, ...(this.threadId === undefined ? {} : { threadId: this.threadId }),
+            ...((this.threadId !== undefined || evidence.size > 0 || evidenceDropped > 0) ? { evidence: visibleEvidence() } : {}) }
+          : result;
       settled = true;
       if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
@@ -193,7 +199,10 @@ export class CodexExecutor implements Executor {
           ...(this.threadId === undefined ? {} : { threadId: this.threadId }),
           evidence: visibleEvidence()
         }
-        : terminationResult ?? failure("CODEX_EXECUTION_FAILED");
+        : terminationResult?.kind === "failed"
+          ? { ...terminationResult, ...(this.threadId === undefined ? {} : { threadId: this.threadId }),
+            ...((this.threadId !== undefined || evidence.size > 0 || evidenceDropped > 0) ? { evidence: visibleEvidence() } : {}) }
+          : failure("CODEX_EXECUTION_FAILED");
     const forceKill = (): void => {
       signalExecution(child, this.platform, "SIGKILL", !directExited);
       killSignalled = true;
@@ -214,12 +223,29 @@ export class CodexExecutor implements Executor {
       if (cooperativeMs === 0) sendTerm();
       else interruptTimer = setTimeout(sendTerm, cooperativeMs);
     };
+    const reportActivity = (): void => {
+      request.onActivity?.({
+        at: new Date().toISOString(),
+        ...(activeCommand === undefined ? {} : {
+          active_item: { type: "commandExecution" as const, status: "inProgress",
+            ...(activeCommand.command === undefined ? {} : { command: bounded(activeCommand.command) }) }
+        })
+      });
+    };
     const startInactivityWatchdog = (): void => {
       if (settled || terminationResult !== undefined) return;
       if (inactivityTimer !== undefined) clearTimeout(inactivityTimer);
+      const timeoutMs = activeCommandItems.size > 0
+        ? this.timing.commandProtocolInactivityTimeoutMs
+          ?? this.timing.protocolInactivityTimeoutMs
+          ?? DEFAULT_EXECUTOR_TIMING.commandProtocolInactivityTimeoutMs
+          ?? 15 * 60_000
+        : this.timing.protocolInactivityTimeoutMs
+          ?? DEFAULT_EXECUTOR_TIMING.protocolInactivityTimeoutMs
+          ?? 5 * 60_000;
       inactivityTimer = setTimeout(
         () => beginTermination(failure("EXECUTOR_STALLED"), 0),
-        this.timing.protocolInactivityTimeoutMs ?? DEFAULT_EXECUTOR_TIMING.protocolInactivityTimeoutMs ?? 2 * 60_000
+        timeoutMs
       );
     };
     const resetInactivityWatchdog = (): void => {
@@ -248,10 +274,16 @@ export class CodexExecutor implements Executor {
         beginTermination(result, 0);
       }
     };
-    deadlineTimer = setTimeout(
-      () => beginTermination(failure("CODEX_EXECUTION_FAILED"), 0),
-      this.timing.executionTimeoutMs
-    );
+    const beginDeadlineTermination = (): void => {
+      const result = failure("EXECUTION_DEADLINE_EXCEEDED");
+      if (this.threadId && this.startedTurnId) {
+        void this.call("turn/interrupt", { threadId: this.threadId, turnId: this.startedTurnId }).catch((): void => {});
+        beginTermination(result, this.timing.interruptGraceMs);
+      } else {
+        beginTermination(result, 0);
+      }
+    };
+    deadlineTimer = setTimeout(beginDeadlineTermination, this.timing.executionTimeoutMs);
     child.on("error", unavailable);
     child.stdin.on("error", unavailable);
     child.stdout.on("error", unavailable);
@@ -294,17 +326,29 @@ export class CodexExecutor implements Executor {
           continue;
         }
         if (typeof message.method !== "string" || !object(message.params)) { finish(failure("CODEX_PROTOCOL_ERROR")); return; }
-        if (activeTurnActivity(message.params)) resetInactivityWatchdog();
+        const isActiveTurnActivity = activeTurnActivity(message.params);
         if (message.method === "turn/started") {
           const turn = object(message.params.turn) ? message.params.turn : message.params;
           if (message.params.threadId === this.threadId &&
             typeof turn.id === "string" &&
             (!this.turnId || turn.id === this.turnId)) {
             this.startedTurnId = turn.id;
+            reportActivity();
             startInactivityWatchdog();
           }
         }
         const item = object(message.params.item) ? message.params.item : undefined;
+        if (isActiveTurnActivity && item?.type === "commandExecution" && typeof item.id === "string") {
+          if (message.method === "item/started") {
+            activeCommandItems.add(item.id);
+            activeCommand = { id: item.id, ...(typeof item.command === "string" ? { command: item.command } : {}) };
+          }
+          if (message.method === "item/completed") {
+            activeCommandItems.delete(item.id);
+            if (activeCommand?.id === item.id) activeCommand = undefined;
+          }
+        }
+        if (isActiveTurnActivity) { reportActivity(); resetInactivityWatchdog(); }
         if ((message.method === "item/started" || message.method === "item/completed") && item) {
           // Preserve unscoped notifications from older protocol versions, but
           // never let an explicitly different thread or turn replace our result.
@@ -468,14 +512,14 @@ export class CodexExecutor implements Executor {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       if (!this.child || this.child.stdin.destroyed) { reject(new CoreError("CODEX_UNAVAILABLE")); return; }
-      const rejectWaiter = (reason = new CoreError("CODEX_EXECUTION_FAILED")): void => reject(reason);
+      const rejectWaiter = (reason?: CoreError): void => reject(reason ?? new CodexRpcTimeoutError(method));
       const timer = setTimeout(() => {
         const waiter = this.pending.get(id);
         if (!waiter) return;
         this.pending.delete(id);
         clearTimeout(waiter.timer);
         waiter.reject();
-      }, this.timing.rpcCallTimeoutMs ?? DEFAULT_RPC_CALL_TIMEOUT_MS);
+      }, this.timing.rpcCallTimeoutMs ?? DEFAULT_EXECUTOR_TIMING.rpcCallTimeoutMs ?? DEFAULT_RPC_CALL_TIMEOUT_MS);
       this.pending.set(id, { method, resolve, reject: rejectWaiter, timer });
       try {
         this.child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);

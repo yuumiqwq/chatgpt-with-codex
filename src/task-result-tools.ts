@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { TaskView } from "./tasks/execution-types.js";
 import type { WorkService } from "./tasks/work-service.js";
+import { DEFAULT_WAIT_TASK_TIMEOUT_SECONDS, waitTaskMaxTimeoutSeconds } from "./runtime-config.js";
 
 function jsonContent(value: unknown) {
   return {
@@ -21,6 +22,9 @@ function taskResultContent(view: TaskView | undefined) {
     ...(view.output === undefined ? {} : { output: view.output }),
     ...(view.partial_output === undefined ? {} : { partial_output: view.partial_output }),
     evidence: view.evidence,
+    ...(view.last_activity_at === undefined ? {} : { last_activity_at: view.last_activity_at }),
+    ...(view.active_item === undefined ? {} : { active_item: view.active_item }),
+    ...(view.elapsed_seconds === undefined ? {} : { elapsed_seconds: view.elapsed_seconds }),
     ...(view.diagnostics === undefined ? {} : { diagnostics: view.diagnostics }),
     ...(view.error === undefined ? {} : { error: view.error }) };
   return jsonContent({
@@ -35,6 +39,7 @@ export function registerTaskResultTools(
   server: McpServer,
   service: Pick<WorkService, "taskView" | "waitTask">
 ): void {
+  const maxWaitSeconds = waitTaskMaxTimeoutSeconds();
   server.registerTool("task_result", {
     description: "Retrieve the completed output or safe error for a task. This tool is read-only.",
     inputSchema: { task_id: z.string() }
@@ -44,7 +49,7 @@ export function registerTaskResultTools(
     description: "Wait until a task is ready, or the timeout expires. Returns the current task view without interrupting the task. This tool is read-only.",
     inputSchema: {
       task_id: z.string(),
-      timeout_seconds: z.number().min(1).max(45).optional().default(25)
+      timeout_seconds: z.number().min(1).max(maxWaitSeconds).optional().default(DEFAULT_WAIT_TASK_TIMEOUT_SECONDS)
     },
     annotations: { readOnlyHint: true, destructiveHint: false }
   }, async ({ task_id, timeout_seconds }, { signal }) => {

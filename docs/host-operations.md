@@ -83,6 +83,11 @@ Executors must be installed and configured before use. Codex is discovered on PA
 | `ENGINEERING_BRIDGE_CODEX_PROVIDER` | Optional provider ID already configured in the selected Codex profile. |
 | `ENGINEERING_BRIDGE_CODEX_DISABLE_MCP=1` | Disables detected configured MCP servers in spawned Codex processes, including `engineering-bridge`, to avoid recursive tool invocation. Does not edit the profile configuration. |
 | `ENGINEERING_BRIDGE_CODEX_FORWARD_PROXY=1` | Explicitly forwards `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` into spawned Codex processes. |
+| `ENGINEERING_BRIDGE_CODEX_EXECUTION_TIMEOUT_SECONDS` | Codex turn hard deadline; default 3600 seconds. |
+| `ENGINEERING_BRIDGE_CODEX_PROTOCOL_INACTIVITY_TIMEOUT_SECONDS` | Ordinary active-turn protocol inactivity window; default 300 seconds. |
+| `ENGINEERING_BRIDGE_CODEX_COMMAND_INACTIVITY_TIMEOUT_SECONDS` | Protocol inactivity window while a command execution item is active; default 900 seconds. |
+| `ENGINEERING_BRIDGE_CODEX_RPC_TIMEOUT_SECONDS` | Individual Codex app-server RPC deadline; default 30 seconds. |
+| `ENGINEERING_BRIDGE_WAIT_TASK_MAX_TIMEOUT_SECONDS` | Maximum allowed long-poll for one `wait_task` call; default 300 seconds. |
 | `DSH_HOME`, `DEEPSEEK_API_KEY`, `DSH_TOOLS_MODE` | DSH profile location and supported runtime inputs. Supply secrets through private process configuration. |
 | `DSH_PERMISSION_MODE` | Set by Bridge for each DSH invocation from `access`; an inherited value does not override the tool request. |
 
@@ -101,7 +106,10 @@ After a tool schema update, refresh the ChatGPT connection and start a new chat.
 | `CODEX_THREAD_BUSY` | The Codex thread is in use by another writer. Wait for that writer to release it before continuing the same thread. This identifies the explicit active-writer conflict, not every RPC `-32600`. |
 | `CODEX_RPC_ERROR` | Codex returned a valid RPC error. Inspect `rpc_method`, `rpc_error_code` and the safe `rpc_error_category`; raw server messages, error data and stderr are not returned. |
 | `CODEX_PROTOCOL_ERROR` | Codex returned malformed or unexpected protocol messages/structure. Check the installed CLI version against the expected app-server protocol. The current adapter invokes `codex app-server --stdio`; CLI protocol changes require validation before upgrading. |
-| `EXECUTOR_STALLED` | Codex stopped producing qualifying turn activity for two minutes. Inspect saved results and file changes before continuing the same work; already-written changes remain. |
+| `CODEX_RPC_TIMEOUT` | A Codex app-server RPC did not answer before its configured deadline. The safe result includes the RPC method. |
+| `CODEX_TURN_FAILED` | Codex explicitly completed the active turn with failed status. Raw upstream details remain hidden. |
+| `EXECUTION_DEADLINE_EXCEEDED` | The executor exceeded its configured total deadline. An active Codex turn is interrupted cooperatively before process termination. |
+| `EXECUTOR_STALLED` | Codex stopped producing qualifying active-turn protocol activity. The default is five minutes ordinarily and 15 minutes while a command execution is active. Inspect saved results and file changes before continuing; already-written changes remain. |
 | `WORK_RESULT_WRITE_FAILED` | Execution ended but its result could not be written. Check state-directory space, permissions and conflicting files before retrying. |
 | Empty project search with a cursor | Follow the cursor using the same home/archive settings; groups and counts cover one page only. |
 | History resume denied | Check configured homes, the original working directory and allowed read roots; preserve linked native history layouts. |

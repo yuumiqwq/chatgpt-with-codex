@@ -443,12 +443,12 @@ test("hard deadline terminates Codex when initialize never responds", async () =
 
   assert.deepEqual(withoutDiagnostics(await settlesWithin(pending)), {
     kind: "failed",
-    error: { code: "CODEX_EXECUTION_FAILED", message: "Codex execution failed." }
+    error: { code: "EXECUTION_DEADLINE_EXCEEDED", message: "The executor exceeded its configured deadline." }
   });
   assert.deepEqual(invocations[0]?.signals, ["SIGTERM", "SIGKILL"]);
 });
 
-test("initialize RPC times out as execution failure before the whole execution deadline", async () => {
+test("initialize RPC times out distinctly before the whole execution deadline", async () => {
   const invocations: Invocation[] = [];
   const executor = timedExecutor(fakeStarter({
     appServerOutput: "",
@@ -459,7 +459,11 @@ test("initialize RPC times out as execution failure before the whole execution d
   try {
     assert.deepEqual(withoutDiagnostics(await settlesWithin(pending, 200)), {
       kind: "failed",
-      error: { code: "CODEX_EXECUTION_FAILED", message: "Codex execution failed." }
+      error: {
+        code: "CODEX_RPC_TIMEOUT",
+        message: "Codex did not answer the RPC request before its deadline.",
+        rpc_method: "initialize"
+      }
     });
   } finally {
     if (invocations[0]?.signals.length === 0) {
@@ -467,6 +471,34 @@ test("initialize RPC times out as execution failure before the whole execution d
       await pending;
     }
   }
+});
+
+test("active-turn execution deadline sends a cooperative interrupt", async () => {
+  const invocations: Invocation[] = [];
+  const executor = new CodexExecutor(
+    TRUSTED_CWD,
+    fakeStarter({ appServerOutput: "", autoComplete: false }, invocations),
+    {},
+    process.platform,
+    { executionTimeoutMs: 70, interruptGraceMs: 30, killGraceMs: 10, protocolInactivityTimeoutMs: 500, commandProtocolInactivityTimeoutMs: 500, rpcCallTimeoutMs: 100 }
+  );
+  const pending = executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  invocations[0]?.send({ method: "turn/started", params: { threadId: "thread-1", turn: { id: "turn-1" } } });
+  invocations[0]?.send({
+    method: "item/started",
+    params: {
+      threadId: "thread-1", turnId: "turn-1",
+      item: { id: "cmd-deadline", type: "commandExecution", status: "inProgress", command: "long-test" }
+    }
+  });
+  const result = await settlesWithin(pending, 180);
+  assert.equal(result.kind, "failed");
+  assert.equal(result.error.code, "EXECUTION_DEADLINE_EXCEEDED");
+  assert.equal(result.threadId, "thread-1");
+  assert.deepEqual(result.evidence, [{ id: "cmd-deadline", type: "commandExecution", status: "inProgress", command: "long-test" }]);
+  const methods = invocations[0]!.stdin.trim().split("\n").map(line => JSON.parse(line).method);
+  assert.equal(methods.includes("turn/interrupt"), true);
 });
 
 test("stalls after command items complete without turn/completed", async () => {
@@ -485,6 +517,67 @@ test("stalls after command items complete without turn/completed", async () => {
   invocations[0]?.send({ method: "item/completed", params: { item: { id: "cmd-1", type: "commandExecution", status: "completed", command: "true" } } });
 
   const result = await settlesWithin(pending, 200);
+  assert.equal(result.kind, "failed");
+  assert.equal(result.error.code, "EXECUTOR_STALLED");
+});
+
+test("active command execution uses the longer inactivity watchdog", async () => {
+  const invocations: Invocation[] = [];
+  const executor = new CodexExecutor(
+    TRUSTED_CWD,
+    fakeStarter({ appServerOutput: "", autoComplete: false }, invocations),
+    {},
+    process.platform,
+    {
+      executionTimeoutMs: 500, interruptGraceMs: 10, killGraceMs: 10,
+      protocolInactivityTimeoutMs: 40, commandProtocolInactivityTimeoutMs: 160, rpcCallTimeoutMs: 100
+    }
+  );
+  const pending = executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  invocations[0]?.send({
+    method: "turn/started",
+    params: { threadId: "thread-1", turn: { id: "turn-1", status: "inProgress" } }
+  });
+  invocations[0]?.send({
+    method: "item/started",
+    params: {
+      threadId: "thread-1", turnId: "turn-1",
+      item: { id: "cmd-1", type: "commandExecution", status: "inProgress", command: "long-test" }
+    }
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 90));
+  invocations[0]?.send({
+    method: "turn/completed",
+    params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } }
+  });
+  assert.equal((await pending).kind, "completed");
+});
+
+test("completed command returns to the ordinary inactivity watchdog", async () => {
+  const invocations: Invocation[] = [];
+  const executor = new CodexExecutor(
+    TRUSTED_CWD,
+    fakeStarter({ appServerOutput: "", autoComplete: false }, invocations),
+    {},
+    process.platform,
+    {
+      executionTimeoutMs: 500, interruptGraceMs: 10, killGraceMs: 10,
+      protocolInactivityTimeoutMs: 45, commandProtocolInactivityTimeoutMs: 160, rpcCallTimeoutMs: 100
+    }
+  );
+  const pending = executor.execute({ taskId: TASK_ID, instruction: "inspect" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  invocations[0]?.send({ method: "turn/started", params: { threadId: "thread-1", turn: { id: "turn-1" } } });
+  invocations[0]?.send({
+    method: "item/started",
+    params: { threadId: "thread-1", turnId: "turn-1", item: { id: "cmd-1", type: "commandExecution", command: "short-test" } }
+  });
+  invocations[0]?.send({
+    method: "item/completed",
+    params: { threadId: "thread-1", turnId: "turn-1", item: { id: "cmd-1", type: "commandExecution", status: "completed", command: "short-test" } }
+  });
+  const result = await settlesWithin(pending, 160);
   assert.equal(result.kind, "failed");
   assert.equal(result.error.code, "EXECUTOR_STALLED");
 });
@@ -826,6 +919,21 @@ test("nonzero exit discards partial output and stderr details", async () => {
   assert.equal(serialized.includes("secret partial"), false);
   assert.equal(serialized.includes("secret stderr"), false);
   assert.equal(serialized.includes("/private/path"), false);
+});
+
+test("ordinary failed turn has a distinct safe error", async () => {
+  const result = await new CodexExecutor(TRUSTED_CWD, fakeStarter({
+    appServerOutput: "",
+    turnError: { message: "secret upstream failure" }
+  }, []), {}).execute({ taskId: TASK_ID, instruction: "x" });
+
+  assert.deepEqual(withoutDiagnostics(result), {
+    kind: "failed",
+    error: { code: "CODEX_TURN_FAILED", message: "Codex reported that the turn failed." },
+    threadId: "thread-1",
+    evidence: []
+  });
+  assert.equal(JSON.stringify(result).includes("secret upstream failure"), false);
 });
 
 test("reports an allowlisted failed-turn reason without exposing raw error details", async () => {

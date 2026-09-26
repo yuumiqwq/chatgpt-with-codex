@@ -14,6 +14,15 @@ export interface ExecutorEvidence {
   readonly changes?: readonly EvidenceChange[];
 }
 
+export interface ExecutorActivity {
+  readonly at: string;
+  readonly active_item?: {
+    readonly type: "commandExecution";
+    readonly status: string;
+    readonly command?: string;
+  };
+}
+
 export interface ExecutorRequest {
   readonly ephemeral?: boolean;
   readonly threadName?: string;
@@ -28,6 +37,7 @@ export interface ExecutorRequest {
   readonly threadPath?: string;
   readonly threadHome?: string;
   readonly onEvidence?: (evidence: readonly ExecutorEvidence[]) => void;
+  readonly onActivity?: (activity: ExecutorActivity) => void;
   readonly onThreadId?: (threadId: string) => void;
 }
 
@@ -51,13 +61,17 @@ export interface ExecutorTiming {
   readonly interruptGraceMs: number;
   readonly killGraceMs: number;
   readonly protocolInactivityTimeoutMs?: number;
+  readonly commandProtocolInactivityTimeoutMs?: number;
+  readonly rpcCallTimeoutMs?: number;
 }
 
 export const DEFAULT_EXECUTOR_TIMING: ExecutorTiming = {
-  executionTimeoutMs: 15 * 60_000,
+  executionTimeoutMs: 60 * 60_000,
   interruptGraceMs: 5_000,
   killGraceMs: 2_000,
-  protocolInactivityTimeoutMs: 2 * 60_000
+  protocolInactivityTimeoutMs: 5 * 60_000,
+  commandProtocolInactivityTimeoutMs: 15 * 60_000,
+  rpcCallTimeoutMs: 30_000
 };
 
 export function signalProcessGroup(

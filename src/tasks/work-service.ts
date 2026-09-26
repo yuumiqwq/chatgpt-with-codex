@@ -5,12 +5,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import { newId } from "../core/ids.js";
 import { serializeError, CoreError, CODEX_RPC_METHODS, CODEX_RPC_ERROR_CATEGORIES } from "../core/errors.js";
-import type { Executor, SandboxMode } from "../executors/executor.js";
+import type { Executor, ExecutorActivity, SandboxMode } from "../executors/executor.js";
 import type { TaskView, ExecutorFactory, ExecutorName } from "./execution-types.js";
 import { RegisteredWorkspaceRegistry } from "../workspaces/registered-workspace-registry.js";
 import { HostError, HostPolicy } from "../host/host-policy.js";
 import { locateCodexSession } from "../host/codex-sessions.js";
 import { queryCodexThread } from "../host/codex-thread-list.js";
+import { DEFAULT_WAIT_TASK_TIMEOUT_SECONDS, waitTaskMaxTimeoutSeconds } from "../runtime-config.js";
 
 const WorkSchema = z.object({
   work_id: z.string().uuid(), name: z.string(), cwd: z.string(), workspace_id: z.string().optional(),
@@ -59,7 +60,7 @@ function problem(code: string, message: string): never { throw new HostError(cod
 export class WorkService {
   private works = new Map<string, Work>();
   private runs = new Map<string, Run>();
-  private live = new Map<string, { executor: Executor; evidence?: TaskView["evidence"] }>();
+  private live = new Map<string, { executor: Executor; evidence?: TaskView["evidence"]; activity?: ExecutorActivity; startedAtMs: number }>();
   private preparing = new Set<string>();
   private retention = RetentionSchema.parse({});
   private savedWorks = new Map<string, string>();
@@ -273,7 +274,7 @@ export class WorkService {
     try {
       run.state = "running"; this.save();
       const executor = this.factory(run.executor, cwd, home || undefined);
-      const live: { executor: Executor; evidence?: TaskView["evidence"] } = { executor };
+      const live: { executor: Executor; evidence?: TaskView["evidence"]; activity?: ExecutorActivity; startedAtMs: number } = { executor, startedAtMs: Date.now() };
       this.live.set(run.task_id, live);
       const result = await executor.execute({ taskId: run.task_id as ReturnType<typeof newId>,
         instruction: options.instruction + (!run.ephemeral && work?.previous_threads.length && !work.thread_id
@@ -286,6 +287,7 @@ export class WorkService {
         ...(options.model ? { model: options.model } : {}),
         ...(options.reasoning_effort ? { reasoning_effort: options.reasoning_effort } : {}),
         onEvidence: evidence => { live.evidence = evidence; },
+        onActivity: activity => { live.activity = activity; },
         onThreadId: threadId => {
           if (!run.ephemeral) {
             run.thread_id = threadId;
@@ -335,14 +337,17 @@ export class WorkService {
       try { return JSON.parse(readFileSync(join(this.resultDirectory, taskId + ".json"), "utf8")); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
+    const live = this.live.get(taskId);
     return { taskId: taskId as ReturnType<typeof newId>, state: run.state,
       executor: run.executor, access: run.access, ready: run.state === "completed" || run.state === "failed",
       ...(run.thread_id ? { threadId: run.thread_id } : {}),
       ...(run.error ? { error: run.error as TaskView["error"] } : {}),
-      ...(this.live.get(taskId)?.evidence ? { evidence: this.live.get(taskId)!.evidence! } : {}) };
+      ...(live?.evidence ? { evidence: live.evidence } : {}),
+      ...(live?.activity ? { last_activity_at: live.activity.at, ...(live.activity.active_item ? { active_item: live.activity.active_item } : {}) } : {}),
+      ...(live ? { elapsed_seconds: Math.max(0, (Date.now() - live.startedAtMs) / 1000) } : {}) };
   }
-  async waitTask(id: unknown, timeout = 25, signal?: AbortSignal) {
-    const end = performance.now() + Math.max(1, Math.min(45, timeout)) * 1000;
+  async waitTask(id: unknown, timeout = DEFAULT_WAIT_TASK_TIMEOUT_SECONDS, signal?: AbortSignal) {
+    const end = performance.now() + Math.max(1, Math.min(waitTaskMaxTimeoutSeconds(), timeout)) * 1000;
     for (;;) {
       signal?.throwIfAborted();
       const view = this.taskView(id);

@@ -64,7 +64,7 @@ Start with `list_workspaces` and use an actual returned `workspace_id`. Resolve 
 | Record completion | Verify the result and artifacts, then call `finish_work` with a summary and references such as file paths or commits. Work can be reopened later. |
 | Direct file operations | Inspect `host_capabilities`, read the file to obtain its SHA-256, then supply that digest when replacing or deleting it. |
 
-Each `wait_task` call waits at most 45 seconds; call it again when `ready=false`. A completed execution does not establish that the goal succeeded. Interruption, timeout and the chat ending do not undo file changes. See [work management](docs/work-management.md) for state and retention details.
+Each `wait_task` call waits at most 300 seconds by default; call it again when `ready=false`. The maximum is configurable without affecting executor liveness. A completed execution does not establish that the goal succeeded. Interruption, timeout and the chat ending do not undo file changes. See [work management](docs/work-management.md) for state and retention details.
 
 ## Permissions and boundaries
 

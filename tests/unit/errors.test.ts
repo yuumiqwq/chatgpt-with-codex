@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CoreError, CodexRpcError, ERROR_CODES, serializeError } from "../../src/core/errors.js";
+import { CoreError, CodexRpcError, CodexRpcTimeoutError, ERROR_CODES, serializeError } from "../../src/core/errors.js";
 
 test("exposes the executor error codes", () => {
   assert.deepEqual(ERROR_CODES, [
@@ -14,7 +14,10 @@ test("exposes the executor error codes", () => {
     "CODEX_PROTOCOL_ERROR",
     "CODEX_THREAD_BUSY",
     "CODEX_RPC_ERROR",
+    "CODEX_RPC_TIMEOUT",
+    "CODEX_TURN_FAILED",
     "CODEX_EXECUTION_FAILED",
+    "EXECUTION_DEADLINE_EXCEEDED",
     "EXECUTOR_STALLED",
     "DSH_UNAVAILABLE",
     "DSH_PROTOCOL_ERROR",
@@ -35,8 +38,17 @@ test("exposes the executor error codes", () => {
   assert.deepEqual(serializeError(new CoreError("CODEX_RPC_ERROR")), {
     code: "CODEX_RPC_ERROR", message: "Codex rejected the RPC request."
   });
+  assert.deepEqual(serializeError(new CoreError("CODEX_RPC_TIMEOUT")), {
+    code: "CODEX_RPC_TIMEOUT", message: "Codex did not answer the RPC request before its deadline."
+  });
+  assert.deepEqual(serializeError(new CoreError("CODEX_TURN_FAILED")), {
+    code: "CODEX_TURN_FAILED", message: "Codex reported that the turn failed."
+  });
   assert.deepEqual(serializeError(new CoreError("CODEX_EXECUTION_FAILED")), {
     code: "CODEX_EXECUTION_FAILED", message: "Codex execution failed."
+  });
+  assert.deepEqual(serializeError(new CoreError("EXECUTION_DEADLINE_EXCEEDED")), {
+    code: "EXECUTION_DEADLINE_EXCEEDED", message: "The executor exceeded its configured deadline."
   });
   assert.deepEqual(serializeError(new CoreError("DSH_UNAVAILABLE")), {
     code: "DSH_UNAVAILABLE", message: "DSH is unavailable."
@@ -117,6 +129,16 @@ test("serializeError removes details from unknown errors and values", () => {
       assert.equal(json.includes(marker), false);
     }
   }
+});
+
+test("serializeError preserves RPC timeout method metadata", () => {
+  const error = new CodexRpcTimeoutError("turn/start");
+  Object.assign(error, { message: "secret-message", stack: "secret-stack" });
+  assert.deepEqual(serializeError(error), {
+    code: "CODEX_RPC_TIMEOUT",
+    message: "Codex did not answer the RPC request before its deadline.",
+    rpc_method: "turn/start"
+  });
 });
 
 test("serializeError preserves only allowlisted RPC metadata", () => {
