@@ -60,7 +60,19 @@ test("MCP exposes unified work operations and rejects removed APIs", async t => 
   try {
     const {VERSION}=await import(VERSION_MODULE.href);
     assert.equal(client.getServerVersion()?.version,VERSION);
+    const instructions = client.getInstructions();
+    assert.ok(instructions);
+    assert.match(instructions, /independent task/);
+    assert.match(instructions, /15-30 seconds/);
+    assert.match(instructions, /end the ChatGPT turn/);
+    assert.match(instructions, /same task_id/);
+    assert.match(instructions, /timeouts do not imply local task failure/);
+    assert.match(instructions, /wait_task\/task_result/);
+    assert.match(instructions, /never duplicate a running task/);
+    assert.match(instructions, /checkpoints/);
     const tools=(await client.listTools()).tools;
+    assert.ok(tools.find(tool => tool.name === "wait_task")?.description?.includes(instructions));
+    assert.equal(tools.filter(tool => tool.description?.includes(instructions)).length, 1);
     for (const name of ["open_work","list_work","continue_work","run_temp","finish_work","manage_work","work_retention"]) {
       assert.ok(tools.some(tool=>tool.name===name));
     }

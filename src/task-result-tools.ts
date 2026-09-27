@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { TaskView } from "./tasks/execution-types.js";
 import type { WorkService } from "./tasks/work-service.js";
 import { DEFAULT_WAIT_TASK_TIMEOUT_SECONDS, waitTaskMaxTimeoutSeconds } from "./runtime-config.js";
+import { LONG_TASK_INSTRUCTIONS } from "./server-instructions.js";
 
 function jsonContent(value: unknown) {
   return {
@@ -46,7 +47,7 @@ export function registerTaskResultTools(
   }, ({ task_id }) => taskResultContent(service.taskView(task_id)));
 
   server.registerTool("wait_task", {
-    description: "Wait until a task is ready, or the timeout expires. Returns the current task view without interrupting the task. This tool is read-only.",
+    description: `Wait until a task is ready, or the timeout expires. Returns the current task view without interrupting the task. This tool is read-only. ${LONG_TASK_INSTRUCTIONS}`,
     inputSchema: {
       task_id: z.string(),
       timeout_seconds: z.number().min(1).max(maxWaitSeconds).optional().default(DEFAULT_WAIT_TASK_TIMEOUT_SECONDS)
